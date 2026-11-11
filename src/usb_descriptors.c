@@ -30,15 +30,11 @@ static tusb_desc_device_t const desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
     .bcdUSB             = USB_BCD,
-    /* Composite device: class 0xEF (Misc), subclass 0x02 (Common), protocol
-     * 0x01 (IAD). This tells Windows the device has multiple interfaces that
-     * should each get their own driver (libusb-win32 for Vendor interface,
-     * usbser.sys for CDC interface). Without this, Windows treats the whole
-     * device as a single vendor-specific device and Zadig ends up binding
-     * both interfaces to WinUSB, killing the CDC COM port. */
-    .bDeviceClass       = 0xEF,
-    .bDeviceSubClass    = 0x02,
-    .bDeviceProtocol    = 0x01,
+    /* CDC 비활성화 빌드: 단일 Vendor 디바이스 (복합 디바이스 아님)
+     * Class 0xFF (Vendor-specific) - avrdude가 단일 디바이스로 인식 */
+    .bDeviceClass       = 0xFF,
+    .bDeviceSubClass    = 0x00,
+    .bDeviceProtocol    = 0x00,
     .bMaxPacketSize0    = CFG_TUD_ENDPOINT0_SIZE,
 
     .idVendor           = USBASP_VID,
@@ -57,28 +53,20 @@ uint8_t const *tud_descriptor_device_cb(void)
     return (uint8_t const *)&desc_device;
 }
 
-/* Vendor class + CDC ACM configuration descriptor (composite device).
+/* Vendor class configuration descriptor (CDC 비활성화 빌드).
  *
- * Layout:
+ * Layout (단일 인터페이스):
  *   Interface 0: Vendor-specific (USBasp) - bulk OUT 0x01 + bulk IN 0x81
- *   Interface 1+2: CDC ACM (control + data) - SWIO ASCII console
  *
  * EP0 is implicitly present (control).
  */
 #define ITF_NUM_VENDOR  0
-#define ITF_NUM_CDC     1
-#define ITF_NUM_CDC_DATA 2
-#define ITF_NUM_TOTAL   3
+#define ITF_NUM_TOTAL   1
 
 #define EPNUM_VENDOR_OUT  0x01
 #define EPNUM_VENDOR_IN   0x81
-#define EPNUM_CDC_NOTIF   0x82
-#define EPNUM_CDC_OUT     0x03
-#define EPNUM_CDC_IN      0x83
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + \
-                           TUD_VENDOR_DESC_LEN + \
-                           TUD_CDC_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_VENDOR_DESC_LEN)
 
 static uint8_t const desc_configuration[] = {
     TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN,
@@ -87,11 +75,6 @@ static uint8_t const desc_configuration[] = {
     /* Interface 0: Vendor-specific (USBasp) */
     TUD_VENDOR_DESCRIPTOR(ITF_NUM_VENDOR, 0,
                           EPNUM_VENDOR_OUT, EPNUM_VENDOR_IN, 64),
-
-    /* Interface 1+2: CDC ACM (SWIO console) */
-    TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4,
-                       EPNUM_CDC_NOTIF, 8,
-                       EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 };
 
 uint8_t const *tud_descriptor_configuration_cb(uint8_t index)

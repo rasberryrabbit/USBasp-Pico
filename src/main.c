@@ -251,6 +251,7 @@ static bool cdc_binary_step(uint8_t c)
  * the binary-mode state machine first; if it returns false (the byte was
  * not a binary command), we accumulate it into a line buffer and dispatch
  * on newline. */
+#if CFG_TUD_CDC
 void tud_cdc_rx_cb(uint8_t itf)
 {
     (void)itf;
@@ -286,6 +287,7 @@ void tud_cdc_rx_cb(uint8_t itf)
         }
     }
 }
+#endif /* CFG_TUD_CDC */
 
 /* ---- Main ---- */
 int main(void)
@@ -317,20 +319,11 @@ int main(void)
     tud_rhport_init(BOARD_TUD_RHPORT, &rh_init);
     board_init_after_tusb();
 
-    /* Emit the Ardulink / minichlink sync character '!'.
-     * minichlink's TryInit_Ardulink waits up to 3 seconds for this byte
-     * after opening the serial port. */
-    tud_cdc_write_str("!");
-    tud_cdc_write_flush();
+    /* CDC 비활성화 빌드 - 동기 문자 출력 없음 */
 
     /* Main loop */
     while (1) {
         tud_task();          /* TinyUSB device task */
         led_status_task();
-
-        /* Drain any CDC data the rx_cb couldn't process inline. */
-        if (tud_cdc_available()) {
-            tud_cdc_rx_cb(0);
-        }
     }
 }

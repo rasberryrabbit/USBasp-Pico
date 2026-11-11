@@ -53,12 +53,12 @@ extern "C" {
 #endif
 
 /* ---- Class configuration ----
- * Vendor class: USBasp protocol (avrdude -c usbasp)
- * CDC class:    SWIO host console for CH32V003 programming (ASCII command
- *               interface on a virtual serial port)
+ * CDC 비활성화 빌드: avrdude 호환성 테스트용
+ * 이 빌드는 Vendor 인터페이스만 단일 디바이스로 제공하여
+ * Windows에서 복합 디바이스 관련 인식 문제를 회피합니다.
  */
 #define CFG_TUD_HID               0
-#define CFG_TUD_CDC               1
+#define CFG_TUD_CDC               0   /* CDC 비활성화 */
 #define CFG_TUD_MSC               0
 #define CFG_TUD_MIDI              0
 #define CFG_TUD_VENDOR            1
@@ -71,8 +71,7 @@ extern "C" {
  * one for high-speed firmware transfer. We keep it for compatibility. */
 #define CFG_TUD_VENDOR_EP_BUFSIZE 64
 
-/* CDC buffers. The SWIO ASCII protocol exchanges short lines (<= 16 bytes
- * per command); 256 bytes is plenty. */
+/* CDC buffers (unused in this build, but kept for source compatibility). */
 #define CFG_TUD_CDC_RX_BUFSIZE    256
 #define CFG_TUD_CDC_TX_BUFSIZE    256
 #define CFG_TUD_CDC_EP_BUFSIZE    64
