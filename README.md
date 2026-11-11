@@ -1,31 +1,20 @@
-# USBasp-Pico (CDC-disabled build)
+# USBasp-Pico
 
-USBasp 호환 AVR 프로그래머 펌웨어 (CDC 비활성화 버전)
+USBasp 호환 AVR 프로그래머 + SWIO (CH32V003) 펌웨어 (CDC 비활성화 빌드)
++ minichlink 통합 패치 포함
 
-## 이 버전의 목적
+## 주요 특징
 
-Windows에서 avrdude가 복합 디바이스(Vendor + CDC) 인식에 실패하는
-문제를 해결하기 위해 **CDC를 비활성화**한 빌드입니다.
-
-- **Vendor 인터페이스만** 제공 (단일 디바이스, 클래스 0xFF)
-- **CDC COM 포트 없음** (SWIO/minichlink 호환성 제거)
-- avrdude 호환성 최우선
-
-## 디바이스 식별
-
-- 제품명: "USBasp"
-- 제조사: "www.fischl.de"
-- VID=0x16C0, PID=0x05DC
-- bDeviceClass=0xFF (Vendor-specific, 단일 디바이스)
-
-## 지원 기능 (이 빌드)
-
-- ✅ avrdude ISP 프로그래밍 (ATmega, ATtiny 시리즈)
-- ✅ TPI 모드 (ATtiny 4/5/9/10/20/40)
-- ✅ HVSP 12V 모드 (ATtiny85 복구, vendor request 200-207)
-- ✅ SWIO (CH32V003, vendor request만 - CDC 없음)
-- ❌ SWIO CDC (이 빌드에 없음)
-- ❌ minichlink (CDC 없으므로 사용 불가)
+- **USBasp 완벽 호환** (VID=0x16C0, PID=0x05DC)
+- **단일 Vendor 디바이스** (bDeviceClass=0xFF, 복합 디바이스 아님)
+- **avrdude Windows 호환성 최우선** (CDC 없음 = 복합 디바이스 문제 없음)
+- **고용량 AVR 지원** (ATmega2560 등 256KB 플래시)
+- **TPI 모드** (ATtiny 4/5/9/10/20/40)
+- **HVSP 12V 모드** (ATtiny85 복구, vendor req 200-207)
+- **SWIO 모드** (WCH CH32V003, vendor req 210-213)
+  - **minichlink 직접 통합** (`minichlink-patch/` 폴더 참고)
+  - Python 도구 (`usbasp_pico_swio.py`)
+- RP2040-Zero 핀아웃 최적화
 
 ## 핀 할당 (RP2040-Zero)
 
@@ -39,7 +28,7 @@ Windows에서 avrdude가 복합 디바이스(Vendor + CDC) 인식에 실패하�
 |-----|-----|-----|------|------|
 | SCI | SDI | SDO | SII | 12V_EN |
 
-### SWIO (GP12): CH32V003 (vendor request 전용)
+### SWIO (GP12): CH32V003 (vendor request)
 | GP12 |
 |------|
 | SWIO (오픈드레인, 4.7k-10k 풀업 필요) |
@@ -59,34 +48,67 @@ python3 scripts/usbasp_pico_hvsp.py readsig
 python3 scripts/usbasp_pico_hvsp.py readfuses
 ```
 
-### 3. SWIO (CH32V003, vendor request만)
+### 3. SWIO - Python 도구
 ```bash
 pip install pyusb
 python3 scripts/usbasp_pico_swio.py init
 python3 scripts/usbasp_pico_swio.py r 06
 python3 scripts/usbasp_pico_swio.py w 7F 12345678
-# --cdc 옵션은 이 빌드에서 동작 안 함 (CDC 없음)
 ```
+
+### 4. SWIO - minichlink 직접 사용 (NEW!)
+
+**minichlink-patch/ 폴더의 패치를 적용하면 minichlink에서 USBasp-Pico를
+직접 SWIO 프로그래머로 사용할 수 있습니다.**
+
+```bash
+# 1. ch32v003fun 저장소 클론
+git clone https://github.com/cnlohr/ch32v003fun
+cd ch32v003fun/minichlink
+
+# 2. 패치 파일 복사
+cp /path/to/usbasp-pico/minichlink-patch/pgm-usbasp-pico.c .
+
+# 3. minichlink.h 에 선언 추가
+# (README.md 참고)
+
+# 4. minichlink.c 의 초기화 시퀀스에 TryInit_USBaspPico 호출 추가
+
+# 5. Makefile 에 소스 추가
+
+# 6. 빌드
+make
+
+# 7. CH32V003 플래시 프로그래밍
+./minichlink -i
+./minichlink -w firmware.bin 0x08000000
+./minichlink -E
+```
+
+자세한 통합 방법은 `minichlink-patch/README.md` 참고.
+
+## 장점: 동시 사용
+
+| 도구 | 인터페이스 | 사용 가능 |
+|------|-----------|---------|
+| avrdude (ISP) | Vendor (libusb) | ✅ |
+| usbasp_pico_hvsp.py (HVSP) | Vendor (pyusb) | ✅ |
+| usbasp_pico_swio.py (SWIO) | Vendor (pyusb) | ✅ |
+| minichlink (SWIO) | Vendor (libusb) | ✅ |
+
+**모든 도구가 동일한 Vendor 인터페이스(Interface 0)를 사용하므로
+Windows에서도 충돌 없이 동시에 사용 가능합니다.**
 
 ## Windows 드라이버 설정
 
-이 빌드는 단일 디바이스이므로 Zadig 설정이 단순합니다:
-
 1. UF2 파일을 Pico에 복사 (BOOTSEL 모드)
-2. 장치 관리자에서 "USBasp" 확인
+2. 장치 관리자에서 "USBasp" 확인 (단일 디바이스)
 3. Zadig 실행:
    - Options → List All Devices
-   - "USBasp" 선택 (Interface 0만 보임 - 복합 디바이스 아님)
-   - 드라이버: **libusb-win32 (v1.2.6.0)** 설치
-4. avrdude 테스트:
-   ```cmd
-   avrdude -c usbasp -p t85
-   ```
-
-## CDC 필요한 경우
-
-CDC COM 포트와 minichlink 호환성이 필요하면 v1.6 빌드를 사용하세요.
-하지만 Windows에서 avrdude 인식 문제가 있을 수 있습니다.
+   - "USBasp" 선택 (복합 디바이스 아님, 인터페이스 1개)
+   - 드라이버: **libusb-win32 (v1.2.6.0)**
+   - Replace Driver
+4. avrdude + minichlink 모두 동작
 
 ## 빌드
 
@@ -98,19 +120,40 @@ cd $PICO_SDK_PATH && git submodule update --init lib/tinyusb
 cd usbasp-pico
 cmake -B build -G Ninja
 cmake --build build
-# 결과물: build/usbasp-pico.uf2 (~81KB, Vendor only)
+# 결과물: build/usbasp-pico.uf2 (~81KB)
+```
+
+## 디렉토리 구조
+
+```
+usbasp-pico/
+├── firmware/                # 빌드된 바이너리 (CDC 비활성화)
+│   └── usbasp-pico.uf2
+├── src/                     # 펌웨어 소스
+├── scripts/                 # Python 호스트 도구
+│   ├── usbasp_pico_hvsp.py
+│   └── usbasp_pico_swio.py
+├── minichlink-patch/        # NEW: minichlink 통합 패치
+│   ├── README.md
+│   └── pgm-usbasp-pico.c
+├── docs/                    # 회로도 + PDF 문서
+└── README.md                # 이 파일
 ```
 
 ## 라이선스
 
 - 펌웨어: GNU GPL v2 (USBasp 원본 계승)
-- TinyUSB: MIT, Pico SDK: BSD-3, arm-gcc: GPL v3 + runtime exception
+- minichlink 패치: GNU GPL v2 (minichlink 라이선스 계승)
+- TinyUSB: MIT, Pico SDK: BSD-3
 
 ## 참고
 
 - USBasp (Thomas Fischl): https://www.fischl.de/usbasp/
 - mariusgreuel/USBasp 포크: https://github.com/mariusgreuel/USBasp
+- minichlink: https://github.com/cnlohr/ch32v003fun/tree/master/minichlink
+- ch32v003fun: https://github.com/cnlohr/ch32v003fun
+- RP2040-Zero Wiki: https://www.waveshare.com/wiki/RP2040-Zero
 
 ---
 
-Z.ai / 2026-11-11 / v1.7 (CDC 비활성화, avrdude 호환성 우선)
+Z.ai / 2026-11-11 / v1.8 (CDC 비활성화 + minichlink 통합 패치)
