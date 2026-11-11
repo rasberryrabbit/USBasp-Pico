@@ -9,7 +9,7 @@ firmware as a SWIO programmer for the CH32V003.
 | Approach | avrdude | minichlink | Windows | Both at once |
 |----------|---------|------------|---------|---------------|
 | CDC binary (v1.6) | ⚠️ composite device issues | ✅ | ⚠️ Zadig splits CDC | ⚠️ |
-| **Vendor request (v1.7) + this patch** | ✅ | ✅ | ✅ single device | ✅ |
+| **Vendor request (v1.8) + this patch** | ✅ | ✅ | ✅ single device | ✅ |
 
 The Vendor-request approach is preferred:
 - USBasp is a single vendor device (class 0xFF) → avrdude and libusb both work cleanly on Windows
