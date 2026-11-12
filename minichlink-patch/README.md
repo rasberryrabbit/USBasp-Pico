@@ -34,7 +34,8 @@ cp pgm-usbasp-pico.c /path/to/ch32v003fun/minichlink/
 In `minichlink.h` (near the other `TryInit_*` declarations):
 
 ```c
-int TryInit_USBaspPico(struct PortalStruct *dev);
+void * TryInit_Ardulink(const init_hints_t*);
+void * TryInit_USBaspPico(void);
 ```
 
 ### 3. Call the detector in minichlink.c
@@ -43,9 +44,15 @@ In `minichlink.c`, find the programmer detection sequence (it tries
 `TryInit_WCHLinkE`, `TryInit_Ardulink`, etc.). Add this in the middle:
 
 ```c
-if (!dev && (dev = TryInit_USBaspPico(0))) {
-    // USBasp-Pico detected (libusb vendor requests)
-}
+		else if( strcmp( specpgm, "usbasppico" ) == 0 )
+			dev = TryInit_USBaspPico();
+```
+  
+```c
+		else if ((dev = TryInit_USBaspPico()))
+		{
+			fprintf( stderr, "Found USBasp-Pico SWIO Programmer\n" );
+		}
 ```
 
 ### 4. Update the Makefile
@@ -53,8 +60,7 @@ if (!dev && (dev = TryInit_USBaspPico(0))) {
 In `minichlink/Makefile`, add `pgm-usbasp-pico.c` to the source list:
 
 ```make
-OBJS = minichlink.o pgm-wch-linke.o pgm-ardulink.o pgm-usbasp-pico.o \
-       serial_dev.o
+C_S:=minichlink.c pgm-wch-linke.c pgm-wch-isp.c pgm-esp32s2-ch32xx.c nhc-link042.c ardulink.c serial_dev.c pgm-b003fun.c pgm-usbasp-pico.c minichgdb.c chips.c ch5xx.c
 ```
 
 ### 5. Build
