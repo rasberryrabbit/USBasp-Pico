@@ -9,12 +9,17 @@ firmware as a SWIO programmer for the CH32V003.
 | Approach | avrdude | minichlink | Windows | Both at once |
 |----------|---------|------------|---------|---------------|
 | CDC binary (v1.6) | ⚠️ composite device issues | ✅ | ⚠️ Zadig splits CDC | ⚠️ |
-| **Vendor request (v1.8) + this patch** | ✅ | ✅ | ✅ single device | ✅ |
+| Vendor request (v1.7) + this patch | ✅ | ✅ | ✅ single device | ✅ |
+| **Vendor request (v1.9) + this patch** | ✅ | ✅ | ✅ single device | ✅ |
 
 The Vendor-request approach is preferred:
 - USBasp is a single vendor device (class 0xFF) → avrdude and libusb both work cleanly on Windows
 - minichlink talks to the same Vendor interface via libusb (no COM port needed)
 - Both tools can be used simultaneously (avrdude for ISP, minichlink for SWIO)
+
+The v1.9 firmware is identical to v1.7/v1.8 on the USB side; the only change is
+internal pin sharing (ISP MOSI and HVSP SDI both on GP3). This patch is fully
+compatible with v1.7, v1.8, and v1.9 firmware.
 
 ## How to integrate
 
@@ -29,8 +34,7 @@ cp pgm-usbasp-pico.c /path/to/ch32v003fun/minichlink/
 In `minichlink.h` (near the other `TryInit_*` declarations):
 
 ```c
-void * TryInit_Ardulink(const init_hints_t*);
-void * TryInit_USBaspPico(void);
+int TryInit_USBaspPico(struct PortalStruct *dev);
 ```
 
 ### 3. Call the detector in minichlink.c
@@ -39,15 +43,9 @@ In `minichlink.c`, find the programmer detection sequence (it tries
 `TryInit_WCHLinkE`, `TryInit_Ardulink`, etc.). Add this in the middle:
 
 ```c
-		else if( strcmp( specpgm, "usbasppico" ) == 0 )
-			dev = TryInit_USBaspPico();
-```
-  
-```c
-		else if ((dev = TryInit_USBaspPico()))
-		{
-			fprintf( stderr, "Found USBasp-Pico SWIO Programmer\n" );
-		}
+if (!dev && (dev = TryInit_USBaspPico(0))) {
+    // USBasp-Pico detected (libusb vendor requests)
+}
 ```
 
 ### 4. Update the Makefile
@@ -55,7 +53,8 @@ In `minichlink.c`, find the programmer detection sequence (it tries
 In `minichlink/Makefile`, add `pgm-usbasp-pico.c` to the source list:
 
 ```make
-C_S:=minichlink.c pgm-wch-linke.c pgm-wch-isp.c pgm-esp32s2-ch32xx.c nhc-link042.c ardulink.c serial_dev.c pgm-b003fun.c pgm-usbasp-pico.c minichgdb.c chips.c ch5xx.c
+OBJS = minichlink.o pgm-wch-linke.o pgm-ardulink.o pgm-usbasp-pico.o \
+       serial_dev.o
 ```
 
 ### 5. Build
@@ -105,7 +104,7 @@ This matches `usbasp_protocol.h` in the USBasp-Pico firmware.
 
 For the Vendor interface, install **libusb-win32** (not WinUSB) via Zadig:
 
-1. Plug in the Pico (with v1.8 firmware flashed)
+1. Plug in the Pico (with v1.7 firmware flashed)
 2. Run Zadig → Options → List All Devices
 3. Select "USBasp" (only one interface appears - no CDC)
 4. Install `libusb-win32 (v1.2.6.0)` driver

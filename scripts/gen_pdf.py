@@ -32,22 +32,24 @@ from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
 from reportlab.platypus.frames import Frame
 
 # ── Font registration ──────────────────────────────────────────────────
-FONT_DIR_KR = '/home/z/my-project/tools/fonts'
+FONT_DIR_KR = '/usr/share/fonts/truetype/wqy'
 FONT_DIR_SC = '/usr/share/fonts/truetype/noto-serif-sc'
 FONT_DIR_CHN = '/usr/share/fonts/truetype/chinese'
 
-# Korean serif font (Noto Serif KR)
+# Korean serif/sans font (WQY Zen Hei covers Hangul; used as NotoSerifKR/NotoSansKR)
+# v1.9: switched from the bundled Noto KR fonts to WenQuanYi Zen Hei, which is
+# installed system-wide and covers the Hangul syllables used in this document.
 pdfmetrics.registerFont(TTFont('NotoSerifKR',
-    f'{FONT_DIR_KR}/NotoSerifKR-Regular.ttf'))
+    f'{FONT_DIR_KR}/wqy-zenhei.ttc', subfontIndex=0))
 pdfmetrics.registerFont(TTFont('NotoSerifKR-Bold',
-    f'{FONT_DIR_KR}/NotoSerifKR-Regular.ttf'))  # same file is variable
+    f'{FONT_DIR_KR}/wqy-zenhei.ttc', subfontIndex=0))
 registerFontFamily('NotoSerifKR', normal='NotoSerifKR', bold='NotoSerifKR-Bold')
 
-# Korean sans (Noto Sans KR)
+# Korean sans (same WQY Zen Hei)
 pdfmetrics.registerFont(TTFont('NotoSansKR',
-    f'{FONT_DIR_KR}/NotoSansKR-Regular.ttf'))
+    f'{FONT_DIR_KR}/wqy-zenhei.ttc', subfontIndex=0))
 pdfmetrics.registerFont(TTFont('NotoSansKR-Bold',
-    f'{FONT_DIR_KR}/NotoSansKR-Regular.ttf'))
+    f'{FONT_DIR_KR}/wqy-zenhei.ttc', subfontIndex=0))
 registerFontFamily('NotoSansKR', normal='NotoSansKR', bold='NotoSansKR-Bold')
 
 # English / math fallback (Liberation Serif for italic, NotoSerifSC for CJK glyphs)
@@ -184,7 +186,7 @@ def later_page(canvas, doc):
     canvas.setFillColor(TEXT_MUTED)
     canvas.drawString(20*mm, A4[1] - 13*mm, 'USBasp-Pico — RP2040 AVR Programmer')
     # Header text - right
-    canvas.drawRightString(A4[0] - 20*mm, A4[1] - 13*mm, 'v1.0 / 2026-11-10')
+    canvas.drawRightString(A4[0] - 20*mm, A4[1] - 13*mm, 'v1.9 / 2026-11-12')
     # Footer
     canvas.setStrokeColor(BORDER)
     canvas.line(20*mm, 15*mm, A4[0] - 20*mm, 15*mm)
@@ -197,7 +199,7 @@ def later_page(canvas, doc):
 
 # ── Build content ──────────────────────────────────────────────────────
 IMG_DIR = '/home/z/my-project/usbasp-pico/docs/images'
-PDF_OUT = '/home/z/my-project/usbasp-pico/download/USBasp-Pico_문서.pdf'
+PDF_OUT = '/home/z/my-project/work/usbasp-pico/docs/USBasp-Pico_문서.pdf'
 
 story = []
 
@@ -225,7 +227,7 @@ story.append(Spacer(1, 8*mm))
 story.append(Paragraph('TinyUSB Vendor-Class + ISP/TPI/HVSP 백엔드', cover_meta_style))
 story.append(Paragraph('5V / 3.3V AVR 지원 + 12V HVSP 모드', cover_meta_style))
 story.append(Spacer(1, 50*mm))
-story.append(Paragraph('버전 1.0  /  2026-11-10', cover_meta_style))
+story.append(Paragraph('버전 1.9  /  2026-11-12', cover_meta_style))
 story.append(Paragraph('Z.ai', cover_meta_style))
 story.append(PageBreak())
 
@@ -397,7 +399,7 @@ story.append(Paragraph('<b>ISP 핀 할당 (기본)</b>', h3_style))
 isp_data = [
     ['Pico 핀', 'ISP 신호', '방향', '설명'],
     ['GP2', 'SCK', '출력', 'SPI 클럭 (500 Hz ~ 1.5 MHz)'],
-    ['GP3', 'MOSI', '출력', 'Pico -> 타겟 데이터'],
+    ['GP3', 'MOSI / HVSP SDI', '출력', 'Pico -> 타겟 데이터 (HVSP SDI 와 공유, v1.9)'],
     ['GP4', 'MISO', '입력', '타겟 -> Pico 데이터'],
     ['GP5', 'RESET', '출력', '타겟 RESET (활성 LOW)'],
     ['GP6', 'LED', '출력', '활동 표시 LED (활성 LOW)'],
@@ -423,14 +425,15 @@ t.setStyle(TableStyle([
 story.append(t)
 story.append(Paragraph('표 3. ISP 핀 할당', caption_style))
 story.append(Spacer(1, 4*mm))
-story.append(Paragraph('<b>HVSP 핀 할당 (옵션, USBASP_PICO_ENABLE_HVSP=1 시)</b>', h3_style))
+story.append(Paragraph('<b>HVSP 핀 할당 (옵션, USBASP_PICO_ENABLE_HVSP=1 시) - v1.9</b>', h3_style))
 hvsp_data = [
     ['Pico 핀', 'HVSP 신호', 'ATtiny85 핀', '설명'],
-    ['GP14', 'SCI', 'PB0 (5)', 'HVSP 클럭'],
-    ['GP15', 'SDI', 'PB1 (6)', '데이터 입력 (Pico -> 타겟)'],
-    ['GP16', 'SDO', 'PB2 (7)', '데이터 출력 (타겟 -> Pico)'],
-    ['GP17', 'SII', 'PB3 (2)', '명령어 입력'],
-    ['GP22', '12V EN', '부스트 ON', '12V 부스트컨버터 인에이블'],
+    ['GP3',  'SDI (공유)', 'PB1 (6)', '데이터 입력, ISP MOSI 와 동일 핀 공유 (v1.9)'],
+    ['GP7',  'SCI',         'PB0 (5)', 'HVSP 클럭'],
+    ['GP8',  'SDO',         'PB2 (7)', '데이터 출력 (타겟 -> Pico)'],
+    ['GP9',  'SII',         'PB3 (2)', '명령어 입력'],
+    ['GP10', '12V EN',      '부스트 ON', '12V 부스트컨버터 인에이블'],
+    ['GP11', '(free)',      '-',        'v1.9 에서 사용자 자유 핀으로 반환'],
 ]
 t = Table(hvsp_data, colWidths=[25*mm, 30*mm, 35*mm, 70*mm])
 t.setStyle(TableStyle([
@@ -517,18 +520,20 @@ story.append(Spacer(1, 4*mm))
 story.append(Paragraph(
     '12V 생성은 외부 부스트컨버터가 필요합니다. MAX662A (12V 30mA 전용 IC, '
     '가장 간단) 또는 MC34063A + 인덕터 + 다이오드 조합을 사용할 수 있습니다. '
-    'RP2040-Zero의 GP11 출력으로 부스트컨버터의 EN (또는 SHDN) 핀을 제어하여 '
-    'HVSP 모드 진입 시에만 12V를 인가합니다. 12V는 RESET 핀에만 인가되어야 하며, '
+    'RP2040-Zero의 GP10 출력으로 부스트컨버터의 EN (또는 SHDN) 핀을 제어하여 '
+    'HVSP 모드 진입 시에만 12V를 인가합니다 (v1.9 에서 12V_EN 이 GP11 에서 GP10 '
+    '으로 이동했습니다). 12V는 RESET 핀에만 인가되어야 하며, '
     'VCC는 5V를 유지해야 합니다.', body_style))
 story.append(Spacer(1, 4*mm))
-story.append(Paragraph('<b>HVSP 핀 할당 (RP2040-Zero, ISP 와 분리)</b>', h3_style))
+story.append(Paragraph('<b>HVSP 핀 할당 (RP2040-Zero, v1.9: MOSI/SDI 공유)</b>', h3_style))
 hvsp_pin_data = [
     ['Pico 핀', 'HVSP 신호', 'ATtiny85 핀', '방향', '설명'],
-    ['GP7',  'SCI', 'PB0 (5)', '출력', 'HVSP 클럭'],
-    ['GP8',  'SDI', 'PB1 (6)', '출력', '데이터 입력 (Pico -> 타겟)'],
-    ['GP9',  'SDO', 'PB2 (7)', '입력', '데이터 출력 (타겟 -> Pico)'],
-    ['GP10', 'SII', 'PB3 (2)', '출력', '명령어 입력'],
-    ['GP11', '12V_EN', '부스트 ON', '출력', '12V 부스트컨버터 인에이블'],
+    ['GP3',  'SDI (공유)', 'PB1 (6)', '출력', '데이터 입력, ISP MOSI 와 동일 핀 공유 (v1.9)'],
+    ['GP7',  'SCI',         'PB0 (5)', '출력', 'HVSP 클럭'],
+    ['GP8',  'SDO',         'PB2 (7)', '입력', '데이터 출력 (타겟 -> Pico)'],
+    ['GP9',  'SII',         'PB3 (2)', '출력', '명령어 입력'],
+    ['GP10', '12V_EN',      '부스트 ON', '출력', '12V 부스트컨버터 인에이블'],
+    ['GP11', '(free)',      '-',         '-',   'v1.9 에서 사용자 자유 핀으로 반환'],
 ]
 t = Table(hvsp_pin_data, colWidths=[20*mm, 25*mm, 30*mm, 20*mm, 70*mm])
 t.setStyle(TableStyle([
@@ -546,14 +551,16 @@ t.setStyle(TableStyle([
     ('BOTTOMPADDING', (0,0), (-1,-1), 3),
 ]))
 story.append(t)
-story.append(Paragraph('표 4. HVSP 핀 할당 (RP2040-Zero, ISP 와 충돌 없음)', caption_style))
+story.append(Paragraph('표 4. HVSP 핀 할당 (RP2040-Zero, v1.9 MOSI/SDI 공유)', caption_style))
 story.append(Spacer(1, 4*mm))
 story.append(Paragraph(
     '<b>RP2040-Zero 핀 선택 이유</b>: GP16 은 온보드 WS2812 RGB LED 에 연결되어 '
     '있어 일반 GPIO 로 사용하기 어렵습니다. GP22-GP25 는 바닥면 솔더 패드로만 '
-    '접근 가능하여 빵판 실험에 부적합합니다. 본 프로젝트는 HVSP 핀을 '
-    'GP7-GP11 (모두 엣지 핀)에 할당하여 ISP 핀 (GP2-GP6)과 충돌을 피하고 빵판/'
-    '와이어링 접근성을 확보했습니다.', body_style))
+    '접근 가능하여 빵판 실험에 부적합합니다. v1.9 부터는 ISP MOSI (GP3) 와 '
+    'HVSP SDI 를 동일한 핀에 공유합니다. 두 신호는 모두 Pico -> 타겟 출력이며 '
+    'MSB 우선 직렬 전송이고, ISP 와 HVSP 는 동시에 활성화되지 않으므로 충돌이 '
+    '없습니다. HVSP 신호는 GP3 (SDI 공유) + GP7-GP10 (SCI/SDO/SII/12V_EN) 에 '
+    '할당되며, GP11 은 사용자 자유 핀으로 반환됩니다.', body_style))
 story.append(Spacer(1, 4*mm))
 story.append(Paragraph('<b>HVSP 사용법 (Python 호스트 도구)</b>', h3_style))
 story.append(Paragraph(

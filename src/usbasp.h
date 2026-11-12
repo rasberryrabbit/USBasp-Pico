@@ -21,7 +21,7 @@
  *   ISP (default, 6-pin AVR ISP connector)
  *   ------------------------------------------------
  *   GP2  ->  ISP_SCK     (output)
- *   GP3  ->  ISP_MOSI    (output)
+ *   GP3  ->  ISP_MOSI    (output)  -- shared with HVSP SDI (see below)
  *   GP4  ->  ISP_MISO    (input)
  *   GP5  ->  ISP_RESET   (output)
  *   GP6  ->  STATUS_LED  (output, active low, on-board Pico LED)
@@ -29,10 +29,18 @@
  *   HVSP (optional, ATtiny85 12 V programming)
  *   ------------------------------------------------
  *   GP7  ->  HVSP_SCI     (output, HVSP clock)
- *   GP8  ->  HVSP_SDI     (output, HVSP data in)
- *   GP9  ->  HVSP_SDO     (input,  HVSP data out)
- *   GP10 ->  HVSP_SII     (output, HVSP instruction)
- *   GP11 ->  HVSP_12V_EN  (output, enables external 12 V boost)
+ *   GP3  ->  HVSP_SDI     (output, HVSP data in)  -- SHARED with ISP_MOSI
+ *   GP8  ->  HVSP_SDO     (input,  HVSP data out)
+ *   GP9  ->  HVSP_SII     (output, HVSP instruction)
+ *   GP10 ->  HVSP_12V_EN  (output, enables external 12 V boost)
+ *
+ *   v1.9 change: MOSI/SDI pin sharing.
+ *   ISP MOSI and HVSP SDI are both Pico->target outputs driven MSB-first, and
+ *   ISP and HVSP are never active at the same time, so a single GPIO (GP3) can
+ *   safely serve both. This frees GP8 from being the HVSP SDI pin; the rest of
+ *   the HVSP signals (SDO/SII/12V_EN) are shifted down by one pin (GP9->GP8,
+ *   GP10->GP9, GP11->GP10), so HVSP now occupies GP3/GP7-GP10 instead of
+ *   GP7-GP11. One free GPIO (GP11) is returned to the user.
  *
  *   Notes for the RP2040-Zero:
  *   - GP16 is wired to the on-board WS2812 RGB LED, so it is NOT used as a
@@ -41,19 +49,20 @@
  *   - GP22-GP25 are only available as bottom solder pads on the Zero, so
  *     they are avoided. All HVSP pins are in the GP0-GP15 edge range.
  *   - GP0 and GP1 are left free for the user (or for the second UART).
+ *   - GP11 is now free for the user (was HVSP_12V_EN before v1.9).
  */
 #define PIN_ISP_SCK          2
-#define PIN_ISP_MOSI         3
+#define PIN_ISP_MOSI         3   /* shared with HVSP SDI */
 #define PIN_ISP_MISO         4
 #define PIN_ISP_RESET        5
 #define PIN_LED              6   /* status LED (external on Zero, on-board on Pico) */
 
 #define PIN_HVSP_SCI         7
-#define PIN_HVSP_SDI         8
-#define PIN_HVSP_SDO         9
-#define PIN_HVSP_SII         10
+#define PIN_HVSP_SDI         PIN_ISP_MOSI   /* GP3 - shared with ISP MOSI (v1.9) */
+#define PIN_HVSP_SDO         8
+#define PIN_HVSP_SII         9
 #ifndef USBASP_PICO_HVSP_12V_PIN
-#define USBASP_PICO_HVSP_12V_PIN  11
+#define USBASP_PICO_HVSP_12V_PIN  10
 #endif
 #define PIN_HVSP_12V_EN      USBASP_PICO_HVSP_12V_PIN
 

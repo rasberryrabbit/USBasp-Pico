@@ -102,22 +102,24 @@ def make_pinout():
 
     # ----- ISP pins (left side, top) -----
     isp_pins = [
-        ("GP2",  "ISP SCK",     C_WIRE_SIG),
-        ("GP3",  "ISP MOSI",    C_WIRE_SIG),
-        ("GP4",  "ISP MISO",    C_WIRE_SIG),
-        ("GP5",  "ISP RESET",   C_WIRE_SIG),
-        ("GP6",  "STATUS LED",  C_WARN),
-        ("GND",  "Ground",      C_WIRE_GND),
-        ("3V3",  "Target 3V3",  C_WIRE_LO),
-        ("VBUS", "5V (USB)",    C_WIRE_HI),
+        ("GP2",  "ISP SCK",              C_WIRE_SIG),
+        ("GP3",  "ISP MOSI / HVSP SDI",  C_WIRE_SIG),
+        ("GP4",  "ISP MISO",             C_WIRE_SIG),
+        ("GP5",  "ISP RESET",            C_WIRE_SIG),
+        ("GP6",  "STATUS LED",           C_WARN),
+        ("GND",  "Ground",               C_WIRE_GND),
+        ("3V3",  "Target 3V3",           C_WIRE_LO),
+        ("VBUS", "5V (USB)",             C_WIRE_HI),
     ]
     # ----- HVSP + SWIO pins (right side) -----
+    # v1.9: MOSI/SDI shared on GP3 (shown on left); HVSP SDO/SII/12V_EN
+    # shifted down by one pin (GP9->GP8, GP10->GP9, GP11->GP10). GP11 is free.
     right_pins = [
         ("GP7",  "HVSP SCI",     C_WIRE_SIG),
-        ("GP8",  "HVSP SDI",     C_WIRE_SIG),
-        ("GP9",  "HVSP SDO",     C_WIRE_SIG),
-        ("GP10", "HVSP SII",     C_WIRE_SIG),
-        ("GP11", "12V EN",       C_WIRE_HI),
+        ("GP8",  "HVSP SDO",     C_WIRE_SIG),
+        ("GP9",  "HVSP SII",     C_WIRE_SIG),
+        ("GP10", "12V EN",       C_WIRE_HI),
+        ("GP11", "(free)",       C_WARN),
         ("GP12", "SWIO (CH32V003)", C_WIRE_SIG),
         ("GP16", "WS2812 LED (avoid)", C_WARN),
         ("GP22-25", "solder pads only", C_WARN),
@@ -320,10 +322,10 @@ def make_wiring_3v3():
 
 
 def make_wiring_hvsp():
-    """HVSP wiring for RP2040-Zero pinout (GP7-11)."""
+    """HVSP wiring for RP2040-Zero pinout (v1.9: MOSI/SDI shared on GP3)."""
     fig, ax = new_ax(12, 8)
     add_title(ax, "Wiring: HVSP mode (12V) - ATtiny85 recovery",
-              "RP2040-Zero pinout. For unbricking AVRs with disabled RESET or wrong clock")
+              "RP2040-Zero pinout (v1.9). For unbricking AVRs with disabled RESET or wrong clock")
 
     rounded_box(ax, 0.04, 0.30, 0.18, 0.55, "RP2040-Zero", C_PICO_BG,
                 C_PICO_BORDER, fontsize=10)
@@ -333,12 +335,15 @@ def make_wiring_hvsp():
     rounded_box(ax, 0.74, 0.20, 0.20, 0.65, "ATtiny85",
                 C_AVRR_BG, C_AVRR_BORDER, fontsize=10, sub="8-pin DIP")
 
+    # v1.9 pin mapping: GP3 (SDI, shared with ISP MOSI), GP7 (SCI),
+    # GP8 (SDO), GP9 (SII), GP10 (12V_EN). GP3 is on the ISP side but
+    # listed here too because it carries the HVSP SDI signal.
     pico_pins = [
-        ("GP7",  0.79, "SCI",    C_WIRE_SIG),
-        ("GP8",  0.74, "SDI",    C_WIRE_SIG),
-        ("GP9",  0.69, "SDO",    C_WIRE_SIG),
-        ("GP10", 0.64, "SII",    C_WIRE_SIG),
-        ("GP11", 0.59, "12V EN", C_WIRE_HI),
+        ("GP3",  0.79, "SDI*",   C_WIRE_SIG),
+        ("GP7",  0.74, "SCI",    C_WIRE_SIG),
+        ("GP8",  0.69, "SDO",    C_WIRE_SIG),
+        ("GP9",  0.64, "SII",    C_WIRE_SIG),
+        ("GP10", 0.59, "12V EN", C_WIRE_HI),
         ("VBUS", 0.54, "5V",     C_WIRE_HI),
         ("GND",  0.49, "GND",    C_WIRE_GND),
     ]
@@ -380,7 +385,7 @@ def make_wiring_hvsp():
     wire(ax, 0.22, 0.54, 0.34, 0.54, color=C_WIRE_HI)
     wire(ax, 0.34, 0.54, 0.34, 0.65, color=C_WIRE_HI)
     wire(ax, 0.34, 0.65, 0.40, 0.65, color=C_WIRE_HI)
-    # Pico 12V EN -> Boost EN
+    # Pico 12V EN (GP10) -> Boost EN
     wire(ax, 0.22, 0.59, 0.36, 0.59, color=C_WIRE_HI)
     wire(ax, 0.36, 0.59, 0.40, 0.59, color=C_WIRE_HI)
     # Pico GND -> Boost GND
@@ -398,11 +403,16 @@ def make_wiring_hvsp():
     wire(ax, 0.70, 0.64, 0.74, 0.64, color=C_WIRE_GND)
 
     # Pico HVSP signals -> ATtiny85
+    # v1.9 mapping:
+    #   GP7  SCI -> pin 5 PB0/SCI
+    #   GP9  SII -> pin 2 PB3/SII
+    #   GP8  SDO -> pin 7 PB2/SDO
+    #   GP3  SDI -> pin 6 PB1/SDI
     pairs = [
-        (0.79, 0.59, C_WIRE_SIG),  # GP7 SCI  -> pin 5 PB0/SCI
-        (0.74, 0.74, C_WIRE_SIG),  # GP10 SII -> pin 2 PB3/SII
-        (0.69, 0.49, C_WIRE_SIG),  # GP9 SDO  -> pin 7 PB2/SDO
-        (0.64, 0.54, C_WIRE_SIG),  # GP8 SDI  -> pin 6 PB1/SDI
+        (0.74, 0.59, C_WIRE_SIG),  # GP7  SCI -> pin 5 PB0/SCI
+        (0.64, 0.74, C_WIRE_SIG),  # GP9  SII -> pin 2 PB3/SII
+        (0.69, 0.49, C_WIRE_SIG),  # GP8  SDO -> pin 7 PB2/SDO
+        (0.79, 0.54, C_WIRE_SIG),  # GP3  SDI -> pin 6 PB1/SDI
     ]
     for src_y, dst_y, color in pairs:
         if abs(src_y - dst_y) > 0.1:
@@ -420,11 +430,12 @@ def make_wiring_hvsp():
     wire(ax, 0.72, 0.44, 0.74, 0.44, color=C_WIRE_HI)
 
     notes = [
+        "* v1.9: GP3 = ISP MOSI / HVSP SDI (shared). ISP and HVSP never run at the same time, no conflict.",
         "* HVSP entry: VCC on -> SDI/SII/SDO low -> apply 12V to RESET -> switch SDO to input -> wait 300us -> send serial",
         "* 12V boost: MAX662A recommended (12V 30mA), or MC34063A + inductor + diode",
         "* CAUTION: 12V applied to RESET pin only; VCC stays at 5V",
         "* avrdude -c usbasp does NOT support HVSP; use usbasp_pico_hvsp.py host tool",
-        "* Pinout: GP7=SCI, GP8=SDI, GP9=SDO, GP10=SII, GP11=12V_EN",
+        "* Pinout: GP3=SDI(shared), GP7=SCI, GP8=SDO, GP9=SII, GP10=12V_EN  (GP11 free)",
     ]
     for i, t in enumerate(notes):
         ax.text(0.04, 0.16 - i * 0.022, t, fontsize=8, color=C_TEXT)
