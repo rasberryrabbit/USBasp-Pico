@@ -30,3 +30,8 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="1206", ATTRS{idProduct}=="5d10", GROUP="dial
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1206", ATTRS{idProduct}=="5d10", GROUP="plugdev", MODE="0660"
 KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1206", ATTRS{idProduct}=="5d10", GROUP="dialout", MODE="0660"
 
+
+# USBasp-Pico (RP2040) SWIO programmer for CH32V003
+# VID/PID shared with original USBasp, libusb driver required (libusb-win32 on Windows).
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05dc", GROUP="plugdev", MODE="0660"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="16c0", ATTRS{idProduct}=="05dc", GROUP="dialout", MODE="0660"
