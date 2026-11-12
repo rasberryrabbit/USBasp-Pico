@@ -2,6 +2,7 @@
 
 USBasp 호환 AVR 프로그래머 + SWIO (CH32V003) 펌웨어 (CDC 비활성화 빌드)
 + minichlink 통합 패치 포함
++ v1.9: MOSI/SDI 핀 공유 (HVSP 전용 핀 1개 절약)
 
 ## 주요 특징
 
@@ -21,17 +22,30 @@ USBasp 호환 AVR 프로그래머 + SWIO (CH32V003) 펌웨어 (CDC 비활성화 
 ### ISP (GP2-GP6): AVR ISP 6-pin
 | GP2 | GP3 | GP4 | GP5 | GP6 |
 |-----|-----|-----|-----|-----|
-| SCK | MOSI | MISO | RESET | LED |
+| SCK | MOSI / **HVSP SDI 공유** | MISO | RESET | LED |
 
-### HVSP (GP7-GP11): ATtiny85 12V 복구
-| GP7 | GP8 | GP9 | GP10 | GP11 |
-|-----|-----|-----|------|------|
-| SCI | SDI | SDO | SII | 12V_EN |
+### HVSP (GP3, GP7-GP10): ATtiny85 12V 복구
+| GP3 | GP7 | GP8 | GP9 | GP10 |
+|-----|-----|-----|-----|------|
+| SDI (**ISP MOSI와 공유**) | SCI | SDO | SII | 12V_EN |
 
 ### SWIO (GP12): CH32V003 (vendor request)
 | GP12 |
 |------|
 | SWIO (오픈드레인, 4.7k-10k 풀업 필요) |
+
+### v1.9 핀 공유 변경 사항
+
+**v1.9에서 MOSI/SDI 핀을 공유합니다.**
+
+- ISP MOSI (GP3) 와 HVSP SDI 가 **동일한 GP3** 핀을 사용합니다.
+- 두 신호는 모두 Pico → 타겟 출력이며 MSB 우선 직렬 전송입니다.
+- ISP 와 HVSP 는 동시에 활성화되지 않으므로 충돌이 없습니다.
+- 이로 인해 HVSP 전용 핀이 5개(GP7-GP11)에서 4개(GP7, GP8, GP9, GP10)로
+  감소했고, **GP11 이 사용자 자유 핀으로 반환**되었습니다.
+- HVSP 의 SDO/SII/12V_EN 이 한 핀씩 아래로 이동했습니다
+  (이전 GP9→GP8, GP10→GP9, GP11→GP10).
+- 기존 ISP 동작에는 변경이 없습니다. avrdude / TPI / pyusb 도구 모두 동일.
 
 ## 사용법
 
@@ -156,4 +170,4 @@ usbasp-pico/
 
 ---
 
-Z.ai / 2026-11-11 / v1.8 (CDC 비활성화 + minichlink 통합 패치)
+Z.ai / 2026-11-12 / v1.9 (CDC 비활성화 + minichlink 통합 패치 + MOSI/SDI 핀 공유)
