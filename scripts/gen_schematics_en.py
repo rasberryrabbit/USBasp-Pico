@@ -16,7 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.patches import FancyBboxPatch, Rectangle, Circle
 
-OUT = "/home/z/my-project/usbasp-pico/docs/images"
+OUT = "/home/z/my-project/work/usbasp-pico/docs/schematics"
 os.makedirs(OUT, exist_ok=True)
 
 # Colors
@@ -111,18 +111,25 @@ def make_pinout():
         ("3V3",  "Target 3V3",           C_WIRE_LO),
         ("VBUS", "5V (USB)",             C_WIRE_HI),
     ]
-    # ----- HVSP + SWIO pins (right side) -----
+    # ----- HVSP + SWIO + JTAG pins (right side) -----
     # v1.9: MOSI/SDI shared on GP3 (shown on left); HVSP SDO/SII/12V_EN
-    # shifted down by one pin (GP9->GP8, GP10->GP9, GP11->GP10). GP11 is free.
+    # shifted down by one pin (GP9->GP8, GP10->GP9, GP11->GP10).
+    # v1.10: GP11 reassigned to JTAG TCK; GP13-GP15 = TMS/TDI/TDO;
+    #        GP26/GP27 = nTRST/nSRST (optional).
     right_pins = [
         ("GP7",  "HVSP SCI",     C_WIRE_SIG),
         ("GP8",  "HVSP SDO",     C_WIRE_SIG),
         ("GP9",  "HVSP SII",     C_WIRE_SIG),
         ("GP10", "12V EN",       C_WIRE_HI),
-        ("GP11", "(free)",       C_WARN),
+        ("GP11", "JTAG TCK/SWCLK", C_WIRE_SIG),
         ("GP12", "SWIO (CH32V003)", C_WIRE_SIG),
+        ("GP13", "JTAG TMS/SWDIO", C_WIRE_SIG),
+        ("GP14", "JTAG TDI",     C_WIRE_SIG),
+        ("GP15", "JTAG TDO",     C_WIRE_SIG),
         ("GP16", "WS2812 LED (avoid)", C_WARN),
         ("GP22-25", "solder pads only", C_WARN),
+        ("GP26", "JTAG nTRST (opt)", C_WIRE_HI),
+        ("GP27", "JTAG nSRST (opt)", C_WIRE_HI),
     ]
 
     y0 = 0.76
@@ -598,12 +605,81 @@ def make_wiring_swio():
     plt.close(fig)
 
 
+def make_wiring_jtag():
+    """JTAG/SWD wiring for ARM Cortex-M / RISC-V / FPGA targets (v1.10)."""
+    fig, ax = new_ax(12, 8)
+    add_title(ax, "Wiring: JTAG / SWD mode (v1.10)",
+              "For ARM Cortex-M (pyOCD), RISC-V / ESP32 / FPGA (OpenOCD)")
+
+    rounded_box(ax, 0.04, 0.30, 0.18, 0.55, "RP2040-Zero", C_PICO_BG,
+                C_PICO_BORDER, fontsize=10, sub="v1.10 JTAG/SWD")
+    rounded_box(ax, 0.74, 0.20, 0.20, 0.65, "Target", C_AVRR_BG,
+                C_AVRR_BORDER, fontsize=10, sub="Cortex-M / RISC-V / FPGA")
+
+    # Pico JTAG/SWD pin assignments (v1.10)
+    pico_pins = [
+        ("GP11", 0.79, "TCK / SWCLK", C_WIRE_SIG),
+        ("GP13", 0.74, "TMS / SWDIO", C_WIRE_SIG),
+        ("GP14", 0.69, "TDI",         C_WIRE_SIG),
+        ("GP15", 0.64, "TDO",         C_WIRE_SIG),
+        ("GP26", 0.59, "nTRST (opt)", C_WIRE_HI),
+        ("GP27", 0.54, "nSRST (opt)", C_WIRE_HI),
+        ("GND",  0.49, "GND",         C_WIRE_GND),
+        ("3V3",  0.44, "VCC (3V3)",   C_WIRE_LO),
+    ]
+    for pin, y, lbl, c in pico_pins:
+        ax.text(0.045, y, pin, ha='left', va='center', fontsize=8,
+                family='monospace', color=C_TEXT)
+        ax.text(0.215, y, lbl, ha='right', va='center', fontsize=8,
+                family='monospace', color=c)
+
+    # Target-side pin labels (standard JTAG 20-pin / SWD 10-pin subset)
+    tgt_pins = [
+        ("TCK / SWCLK", 0.79, C_WIRE_SIG),
+        ("TMS / SWDIO", 0.74, C_WIRE_SIG),
+        ("TDI",         0.69, C_WIRE_SIG),
+        ("TDO",         0.64, C_WIRE_SIG),
+        ("nTRST",       0.59, C_WIRE_HI),
+        ("nSRST",       0.54, C_WIRE_HI),
+        ("GND",         0.49, C_WIRE_GND),
+        ("VCC (3V3)",   0.44, C_WIRE_LO),
+    ]
+    for pin, y, c in tgt_pins:
+        ax.text(0.745, y, pin, ha='right', va='center', fontsize=8,
+                family='monospace', color=c)
+
+    # Signal wires (straight horizontal)
+    for (_, y, c) in [(None, 0.79, C_WIRE_SIG), (None, 0.74, C_WIRE_SIG),
+                      (None, 0.69, C_WIRE_SIG), (None, 0.64, C_WIRE_SIG),
+                      (None, 0.59, C_WIRE_HI), (None, 0.54, C_WIRE_HI),
+                      (None, 0.49, C_WIRE_GND), (None, 0.44, C_WIRE_LO)]:
+        wire(ax, 0.22, y, 0.74, y, color=c)
+
+    notes = [
+        "* v1.10: JTAG/SWD backend via vendor requests 220-226",
+        "* JTAG (4-wire): TCK, TMS, TDI, TDO + GND + VCC. nTRST/nSRST optional.",
+        "* SWD (2-wire): SWCLK=GP11, SWDIO=GP13 (bidirectional). Skip TDI/TDO.",
+        "* Cortex-M target -> pyOCD plugin (usbasp_pico_probe.py)",
+        "* RISC-V / ESP32 / FPGA -> OpenOCD remote_bitbang bridge (usbasp_pico_jtag_bridge.py)",
+        "* Firmware is tool-agnostic; flash once, pick host tool per target.",
+        "* TCK is software-clocked (~500 kHz max); fine for debug entry + flash.",
+        "* Pins do not overlap ISP/HVSP/SWIO, so all four backends coexist.",
+    ]
+    for i, t in enumerate(notes):
+        ax.text(0.04, 0.30 - i * 0.025, t, fontsize=8, color=C_TEXT)
+
+    plt.savefig(os.path.join(OUT, "wiring_jtag.png"), dpi=200,
+                bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     make_pinout()
     make_wiring_basic()
     make_wiring_3v3()
     make_wiring_hvsp()
     make_wiring_swio()
+    make_wiring_jtag()
     make_block_diagram()
     print("Generated:")
     for f in sorted(os.listdir(OUT)):

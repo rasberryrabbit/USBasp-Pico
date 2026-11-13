@@ -49,7 +49,21 @@
  *   - GP22-GP25 are only available as bottom solder pads on the Zero, so
  *     they are avoided. All HVSP pins are in the GP0-GP15 edge range.
  *   - GP0 and GP1 are left free for the user (or for the second UART).
- *   - GP11 is now free for the user (was HVSP_12V_EN before v1.9).
+ *   - GP11 is now used for JTAG TCK (v1.10); before v1.9 it was HVSP_12V_EN.
+ *
+ *   JTAG / SWD (v1.10, optional, USBASP_PICO_ENABLE_JTAG=1)
+ *   ------------------------------------------------
+ *   GP11 ->  TCK / SWCLK   (output, JTAG clock / SWD clock)
+ *   GP13 ->  TMS / SWDIO   (output in JTAG; bidirectional in SWD)
+ *   GP14 ->  TDI           (output, JTAG only)
+ *   GP15 ->  TDO           (input,  JTAG only)
+ *   GP26 ->  nTRST         (output, optional, active low)
+ *   GP27 ->  nSRST         (output, optional, active low)
+ *
+ *   These six pins do not overlap ISP (GP2-GP6), HVSP (GP3/GP7-GP10), or
+ *   SWIO (GP12), so all four backends can coexist on one Pico and only one
+ *   is active at a time. nTRST/nSRST are optional: if you only need the
+ *   four-wire JTAG or SWD, leave GP26/GP27 unconnected.
  */
 #define PIN_ISP_SCK          2
 #define PIN_ISP_MOSI         3   /* shared with HVSP SDI */
@@ -65,6 +79,32 @@
 #define USBASP_PICO_HVSP_12V_PIN  10
 #endif
 #define PIN_HVSP_12V_EN      USBASP_PICO_HVSP_12V_PIN
+
+/* JTAG / SWD pins (v1.10). Defaults can be overridden at build time. */
+#ifndef USBASP_PICO_JTAG_TCK_PIN
+#define USBASP_PICO_JTAG_TCK_PIN   11   /* also SWCLK */
+#endif
+#ifndef USBASP_PICO_JTAG_TMS_PIN
+#define USBASP_PICO_JTAG_TMS_PIN   13   /* also SWDIO (bidirectional in SWD) */
+#endif
+#ifndef USBASP_PICO_JTAG_TDI_PIN
+#define USBASP_PICO_JTAG_TDI_PIN   14
+#endif
+#ifndef USBASP_PICO_JTAG_TDO_PIN
+#define USBASP_PICO_JTAG_TDO_PIN   15
+#endif
+#ifndef USBASP_PICO_JTAG_NTRST_PIN
+#define USBASP_PICO_JTAG_NTRST_PIN 26
+#endif
+#ifndef USBASP_PICO_JTAG_NSRST_PIN
+#define USBASP_PICO_JTAG_NSRST_PIN 27
+#endif
+#define PIN_JTAG_TCK    USBASP_PICO_JTAG_TCK_PIN
+#define PIN_JTAG_TMS    USBASP_PICO_JTAG_TMS_PIN
+#define PIN_JTAG_TDI    USBASP_PICO_JTAG_TDI_PIN
+#define PIN_JTAG_TDO    USBASP_PICO_JTAG_TDO_PIN
+#define PIN_JTAG_NTRST  USBASP_PICO_JTAG_NTRST_PIN
+#define PIN_JTAG_NSRST  USBASP_PICO_JTAG_NSRST_PIN
 
 /* ----- Globals exposed from main.c --------------------------------- */
 extern uint8_t prog_sck;          /* current SCK option */

@@ -186,7 +186,7 @@ def later_page(canvas, doc):
     canvas.setFillColor(TEXT_MUTED)
     canvas.drawString(20*mm, A4[1] - 13*mm, 'USBasp-Pico — RP2040 AVR Programmer')
     # Header text - right
-    canvas.drawRightString(A4[0] - 20*mm, A4[1] - 13*mm, 'v1.9 / 2026-11-12')
+    canvas.drawRightString(A4[0] - 20*mm, A4[1] - 13*mm, 'v1.10 / 2026-11-13')
     # Footer
     canvas.setStrokeColor(BORDER)
     canvas.line(20*mm, 15*mm, A4[0] - 20*mm, 15*mm)
@@ -227,7 +227,7 @@ story.append(Spacer(1, 8*mm))
 story.append(Paragraph('TinyUSB Vendor-Class + ISP/TPI/HVSP 백엔드', cover_meta_style))
 story.append(Paragraph('5V / 3.3V AVR 지원 + 12V HVSP 모드', cover_meta_style))
 story.append(Spacer(1, 50*mm))
-story.append(Paragraph('버전 1.9  /  2026-11-12', cover_meta_style))
+story.append(Paragraph('버전 1.10  /  2026-11-13', cover_meta_style))
 story.append(Paragraph('Z.ai', cover_meta_style))
 story.append(PageBreak())
 
@@ -433,7 +433,7 @@ hvsp_data = [
     ['GP8',  'SDO',         'PB2 (7)', '데이터 출력 (타겟 -> Pico)'],
     ['GP9',  'SII',         'PB3 (2)', '명령어 입력'],
     ['GP10', '12V EN',      '부스트 ON', '12V 부스트컨버터 인에이블'],
-    ['GP11', '(free)',      '-',        'v1.9 에서 사용자 자유 핀으로 반환'],
+    ['GP11', 'JTAG TCK (v1.10)', '-', 'v1.10 에서 JTAG/SWD TCK/SWCLK 로 재할당'],
 ]
 t = Table(hvsp_data, colWidths=[25*mm, 30*mm, 35*mm, 70*mm])
 t.setStyle(TableStyle([
@@ -533,7 +533,7 @@ hvsp_pin_data = [
     ['GP8',  'SDO',         'PB2 (7)', '입력', '데이터 출력 (타겟 -> Pico)'],
     ['GP9',  'SII',         'PB3 (2)', '출력', '명령어 입력'],
     ['GP10', '12V_EN',      '부스트 ON', '출력', '12V 부스트컨버터 인에이블'],
-    ['GP11', '(free)',      '-',         '-',   'v1.9 에서 사용자 자유 핀으로 반환'],
+    ['GP11', 'JTAG TCK (v1.10)', '-',         '출력', 'v1.10 에서 JTAG/SWD TCK/SWCLK 로 재할당'],
 ]
 t = Table(hvsp_pin_data, colWidths=[20*mm, 25*mm, 30*mm, 20*mm, 70*mm])
 t.setStyle(TableStyle([
@@ -827,6 +827,85 @@ story.append(Paragraph(
     '# CDC 방식 강제 (시리얼 포트 경로 지정)<br/>'
     'python3 scripts/usbasp_pico_swio.py --cdc --port /dev/ttyACM0 r 06</font>',
     code_style))
+story.append(PageBreak())
+
+# ─── Chapter 6.6: JTAG / SWD (v1.10) ─────────────────────────────────
+story.append(add_heading('6.6 JTAG / SWD 모드 (v1.10)', h1_style, level=0))
+story.append(Paragraph(
+    'v1.10 부터 USBasp-Pico 에 JTAG 및 SWD 디버그 백엔드가 추가되었습니다. '
+    '이 백엔드는 도구 무관 비트뱅 설계로, 두 개의 호스트 도구가 동일한 '
+    'vendor request 220-226 을 공유합니다. 펌웨어는 한 번만 플래시하면 되며, '
+    '타겟 아키텍처에 따라 호스트 도구만 선택하면 됩니다. ISP/HVSP/SWIO 와 '
+    '핀이 미중복되므로 네 백엔드가 한 Pico 에 공존합니다.', body_style))
+
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph('<b>JTAG / SWD 핀 할당 (v1.10)</b>', h3_style))
+jtag_pin_data = [
+    ['Pico 핀', 'JTAG 신호', 'SWD 신호', '방향', '설명'],
+    ['GP11', 'TCK',    'SWCLK', '출력', 'JTAG/SWD 클럭 (소프트웨어 토글)'],
+    ['GP13', 'TMS',    'SWDIO', '출력/입력', 'JTAG: 출력 / SWD: 양방향 (방향 전환)'],
+    ['GP14', 'TDI',    '-',     '출력', 'JTAG 데이터 입력 (SWD 미사용)'],
+    ['GP15', 'TDO',    '-',     '입력', 'JTAG 데이터 출력 (SWD 미사용)'],
+    ['GP26', 'nTRST',  '-',     '출력', 'JTAG 리셋 (옵션, 활성 LOW)'],
+    ['GP27', 'nSRST',  '-',     '출력', '타겟 하드웨어 리셋 (옵션, 활성 LOW)'],
+]
+t = Table(jtag_pin_data, colWidths=[20*mm, 25*mm, 25*mm, 25*mm, 65*mm])
+t.setStyle(TableStyle([
+    ('BACKGROUND', (0,0), (-1,0), HEADER_FILL),
+    ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+    ('FONTNAME', (0,0), (-1,0), 'NotoSerifKR-Bold'),
+    ('FONTNAME', (0,1), (-1,-1), 'NotoSerifKR'),
+    ('FONTSIZE', (0,0), (-1,-1), 9),
+    ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ('GRID', (0,0), (-1,-1), 0.5, BORDER),
+    ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.white, TABLE_STRIPE]),
+    ('LEFTPADDING', (0,0), (-1,-1), 6),
+    ('RIGHTPADDING', (0,0), (-1,-1), 6),
+    ('TOPPADDING', (0,0), (-1,-1), 3),
+    ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+]))
+story.append(t)
+story.append(Paragraph('표 5. JTAG / SWD 핀 할당 (v1.10)', caption_style))
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph(
+    '<b>타겟별 도구 선택</b>: ARM Cortex-M (STM32, nRF, LPC) 은 pyOCD 플러그인 '
+    '(usbasp_pico_probe.py) 을 사용하면 명령 한 줄로 플래시/디버그가 가능합니다. '
+    'RISC-V (CH32V307), ESP32 (Xtensa), FPGA (ECP5/iCE40) 등은 OpenOCD 의 '
+    'remote_bitbang 드라이버와 TCP 브릿지 (usbasp_pico_jtag_bridge.py) 를 '
+    '사용합니다. OpenOCD 는 소스 수정 없이 내장 remote_bitbang 드라이버로 '
+    '동작합니다.', body_style))
+
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph('<b>pyOCD 사용법 (Cortex-M)</b>', h3_style))
+story.append(Paragraph(
+    '<font face="Mono">pip install pyocd pyusb<br/>'
+    'cd scripts/<br/>'
+    'pip install -e .    # 플러그인 등록<br/>'
+    '<br/>'
+    '# 프로브 인식<br/>'
+    'pyocd list --probes    # "usbasp_pico" 표시<br/>'
+    '<br/>'
+    '# STM32 플래시<br/>'
+    'pyocd flash firmware.hex -t stm32f103rb -b usbasp_pico</font>',
+    code_style))
+
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph('<b>OpenOCD 사용법 (RISC-V / ESP32 / FPGA)</b>', h3_style))
+story.append(Paragraph(
+    '<font face="Mono">pip install pyusb<br/>'
+    '<br/>'
+    '# 터미널 1: 브릿지 실행<br/>'
+    'python3 scripts/usbasp_pico_jtag_bridge.py -p 3335 -s 1000<br/>'
+    '<br/>'
+    '# 터미널 2: OpenOCD (수정 불필요)<br/>'
+    'openocd -f scripts/usbasp_pico_openocd.cfg -f target/stm32f1x.cfg</font>',
+    code_style))
+story.append(Spacer(1, 3*mm))
+story.append(Paragraph(
+    '브릿지는 OpenOCD 의 remote_bitbang ASCII 프로토콜 (명령 0-7, B, b, R, r, '
+    'S, s, J, Q) 을 vendor request 220-226 으로 변환합니다. TCK 는 소프트웨어 '
+    '토글로 최대 약 500 kHz 까지 가능하며, 디버그 진입 및 플래시 프로그래밍에 '
+    '충분한 속도입니다.', body_style))
 story.append(PageBreak())
 
 # ─── Chapter 7: Build ──────────────────────────────────────────────────

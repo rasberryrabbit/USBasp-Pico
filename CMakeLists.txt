@@ -30,6 +30,7 @@ add_executable(usbasp-pico
     src/tpi.c
     src/hvsp.c
     src/swio.c
+    src/jtag.c
     src/usbasp_protocol.c
 )
 
@@ -61,12 +62,18 @@ target_compile_definitions(usbasp-pico PRIVATE
 
 # Compile-time configuration toggles (override with -D on the cmake command line)
 #   USBASP_PICO_ENABLE_HVSP=1         -> enable ATtiny85 / HVSP (12 V) support
-#   USBASP_PICO_HVSP_12V_PIN=<gpio>   -> GPIO driving the 12 V enable (default 11)
-#   HVSP pinout (Waveshare RP2040-Zero friendly): GP7=SCI, GP8=SDI, GP9=SDO,
-#                                                 GP10=SII, GP11=12V_EN
+#   USBASP_PICO_HVSP_12V_PIN=<gpio>   -> GPIO driving the 12 V enable (default 10, v1.9)
+#   USBASP_PICO_ENABLE_JTAG=1         -> enable JTAG/SWD backend (v1.10)
+#   USBASP_PICO_JTAG_*_PIN=<gpio>     -> override JTAG TCK/TMS/TDI/TDO/nTRST/nSRST
+#   HVSP pinout (v1.9, Waveshare RP2040-Zero friendly):
+#       GP3=SDI(shared w/ ISP MOSI), GP7=SCI, GP8=SDO, GP9=SII, GP10=12V_EN
+#   JTAG/SWD pinout (v1.10):
+#       GP11=TCK/SWCLK, GP13=TMS/SWDIO, GP14=TDI, GP15=TDO,
+#       GP26=nTRST(opt), GP27=nSRST(opt)
 target_compile_definitions(usbasp-pico PRIVATE
     USBASP_PICO_ENABLE_HVSP=1
-    USBASP_PICO_HVSP_12V_PIN=11
+    USBASP_PICO_HVSP_12V_PIN=10
+    USBASP_PICO_ENABLE_JTAG=1
     PICO_RP2040_USB_DEVICE_ENUMERATION_FIX=1
 )
 

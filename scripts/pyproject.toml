@@ -1,0 +1,27 @@
+# pyOCD plugin packaging for USBasp-Pico (v1.10)
+#
+# Install the probe as a pyOCD plugin:
+#   pip install -e .
+# Then:
+#   pyocd list --probes          # should list "usbasp_pico"
+#   pyocd cmd -t stm32f103rb -b usbasp_pico
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usbasp-pico-pyocd"
+version = "1.10.0"
+description = "pyOCD DebugProbe plugin for USBasp-Pico (vendor-class JTAG/SWD)"
+requires-python = ">=3.8"
+dependencies = [
+    "pyocd>=0.35",
+    "pyusb>=1.2",
+]
+
+[project.entry-points."pyocd.probe"]
+usbasp_pico = "usbasp_pico_probe:USBaspPicoProbe"
+
+[tool.setuptools]
+py-modules = ["usbasp_pico_probe"]

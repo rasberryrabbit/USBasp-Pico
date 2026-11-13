@@ -57,10 +57,37 @@
 #define USBASP_PICO_SWIO_READ_REG     212
 #define USBASP_PICO_SWIO_WRITE_REG    213
 
-/* Capabilities flags. bit 0 = TPI (original USBasp), bit 1 = HVSP, bit 2 = SWIO. */
+/* USBasp-Pico JTAG/SWD extension (vendor-specific, v1.10).
+ * Codes above the SWIO range so avrdude / HVSP / SWIO flows never reach them.
+ * Accessed by two host-side tools that share the same backend:
+ *   - scripts/usbasp_pico_probe.py        (pyOCD DebugProbe plugin)
+ *   - scripts/usbasp_pico_jtag_bridge.py  (OpenOCD remote_bitbang TCP bridge)
+ *
+ * The backend is tool-agnostic: it accepts a sequence of (TCK, TMS, TDI) bit
+ * tuples and returns the sampled TDO bits. SWD is handled by bitbanging the
+ * SWDIO line (TMS pin, direction-switched) under host control. */
+#define USBASP_PICO_JTAG_INIT        220  /* OUT: wValue=protocol (0=JTAG,1=SWD),
+                                          *      wIndex=speed_kHz; inits JTAG pins */
+#define USBASP_PICO_JTAG_SEQ         221  /* OUT bulk: bytes of packed bits, each byte
+                                          *      = (tdi<<0)|(tms<<1)|(tck<<2) per bit;
+                                          *      returns TDO bits packed MSB-first */
+#define USBASP_PICO_JTAG_SWD_SEQ     222  /* IN/OUT: SWD sequence, host drives direction;
+                                          *      payload: [dir_bitmap, nbits, data...] */
+#define USBASP_PICO_JTAG_RESET       223  /* OUT: wValue=(ntrst<<0)|(nsrst<<1);
+                                          *      0=release, 1=assert */
+#define USBASP_PICO_JTAG_SPEED       224  /* OUT: wValue=kHz; sets TCK period */
+#define USBASP_PICO_JTAG_PINSET      225  /* OUT: direct pin drive for remote_bitbang
+                                          *      single-bit ops; wValue=(tck<<0)|
+                                          *      (tms<<1)|(tdi<<2)|(ntrst<<3)|(nsrst<<4);
+                                          *      returns sampled (tdo<<0) */
+#define USBASP_PICO_JTAG_RELEASE     226  /* OUT: tri-state all JTAG pins, return to idle */
+
+/* Capabilities flags. bit 0 = TPI (original USBasp), bit 1 = HVSP,
+ * bit 2 = SWIO, bit 3 = JTAG/SWD (v1.10). */
 #define USBASP_CAP_0_TPI            0x01
 #define USBASP_CAP_1_HVSP           0x02
 #define USBASP_CAP_2_SWIO           0x04
+#define USBASP_CAP_3_JTAG           0x08
 
 /* Programming state machine */
 typedef enum {

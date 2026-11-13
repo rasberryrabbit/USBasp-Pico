@@ -34,6 +34,7 @@
 #include "tpi.h"
 #include "hvsp.h"
 #include "swio.h"
+#include "jtag.h"
 
 /* ---- programming state ---- */
 uint8_t  prog_sck = USBASP_ISP_SCK_AUTO;
@@ -70,6 +71,18 @@ static uint16_t hvsp_flash_addr = 0;
  * swio_write_reg() in the ACK stage. */
 static bool swio_reg_pending = false;
 static uint8_t swio_reg_addr = 0;
+
+/* Pending JTAG bit sequence (USBASP_PICO_JTAG_SEQ). The packed (tdi,tms,tck)
+ * tuples arrive in the data stage into block_scratch; on the ACK stage we
+ * run jtag_seq() and store the TDO result back into block_scratch (packed
+ * MSB-first, ceil(nbytes/8) bytes). The host then issues a follow-up IN
+ * control transfer (USBASP_PICO_JTAG_SEQ with bmRequestType IN, 0xC0) to
+ * read the TDO bytes back. We track the result byte count here. */
+#ifdef USBASP_PICO_ENABLE_JTAG
+static bool     jtag_seq_pending = false;
+static uint16_t jtag_seq_len = 0;        /* number of input bytes (= TDO bits) */
+static uint16_t jtag_seq_result_bytes = 0; /* ceil(jtag_seq_len/8) */
+#endif
 
 /* ---- TinyUSB vendor-class callback ---- */
 bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
@@ -145,6 +158,31 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
                            | ((uint32_t)block_scratch[3] << 24);
             swio_write_reg(swio_reg_addr, value);
         }
+#ifdef USBASP_PICO_ENABLE_JTAG
+        /* JTAG bit sequence: data stage has delivered jtag_seq_len bytes of
+         * packed (tdi,tms,tck) tuples into block_scratch. Run jtag_seq() and
+         * write the TDO bits (packed MSB-first) back into block_scratch[0..].
+         * The host reads them back with a follow-up IN control transfer of
+         * the same request (handled in the SETUP stage below by checking
+         * the direction bit). */
+        if (stage == CONTROL_STAGE_ACK && jtag_seq_pending) {
+            jtag_seq_pending = false;
+            uint16_t nbits = jtag_seq_len;
+            uint16_t out_bytes = (uint16_t)((nbits + 7) / 8);
+            /* Run the sequence; TDO is written MSB-first into block_scratch.
+             * We use a temporary buffer to avoid clobbering input while
+             * reading - but jtag_seq reads input[i] and writes out[i/8],
+             * and i/8 <= i always, so in-place is safe. */
+            jtag_seq(block_scratch, nbits, block_scratch);
+            /* Zero the trailing unused bits of the last byte for cleanliness. */
+            if (out_bytes > 0 && (nbits & 7)) {
+                uint8_t used = (uint8_t)(nbits & 7);
+                uint8_t mask = (uint8_t)(0xFF << (8 - used));
+                block_scratch[out_bytes - 1] &= mask;
+            }
+            jtag_seq_result_bytes = out_bytes;
+        }
+#endif
         return true;
     }
 
@@ -322,8 +360,15 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         }
 
     case USBASP_FUNC_GETCAPABILITIES:
-        /* Advertise TPI (original USBasp), HVSP (Pico ext), and SWIO (Pico ext). */
-        reply_buffer[0] = USBASP_CAP_0_TPI | USBASP_CAP_1_HVSP | USBASP_CAP_2_SWIO;
+        /* Advertise TPI (original USBasp), HVSP (Pico ext), SWIO (Pico ext),
+         * and JTAG/SWD (Pico ext, v1.10). */
+        reply_buffer[0] = USBASP_CAP_0_TPI
+                        | USBASP_CAP_1_HVSP
+                        | USBASP_CAP_2_SWIO
+#ifdef USBASP_PICO_ENABLE_JTAG
+                        | USBASP_CAP_3_JTAG
+#endif
+                        ;
         reply_buffer[1] = 0;
         reply_buffer[2] = 0;
         reply_buffer[3] = 0;
@@ -414,6 +459,68 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         swio_reg_addr = b0;
         swio_reg_pending = true;
         return tud_control_xfer(rhport, request, block_scratch, 4);
+
+#ifdef USBASP_PICO_ENABLE_JTAG
+    /* ---- JTAG / SWD extension (v1.10, USBasp-Pico only) ----
+     * Tool-agnostic bit-bang backend shared by:
+     *   - scripts/usbasp_pico_probe.py        (pyOCD DebugProbe plugin)
+     *   - scripts/usbasp_pico_jtag_bridge.py  (OpenOCD remote_bitbang bridge)
+     */
+
+    case USBASP_PICO_JTAG_INIT:
+        /* b0 = protocol (0=JTAG, 1=SWD), b2 = speed in kHz (low byte). */
+        jtag_init(b0, (uint16_t)b2);
+        return tud_control_status(rhport, request);
+
+    case USBASP_PICO_JTAG_RELEASE:
+        /* Tri-state all JTAG/SWD pins, return to idle. */
+        jtag_release();
+        return tud_control_status(rhport, request);
+
+    case USBASP_PICO_JTAG_SPEED:
+        /* b0+b1 = speed in kHz (little-endian). */
+        jtag_set_speed((uint16_t)((uint16_t)b0 | ((uint16_t)b1 << 8)));
+        return tud_control_status(rhport, request);
+
+    case USBASP_PICO_JTAG_RESET:
+        /* b0 = mask (bit0=nTRST, bit1=nSRST), b1 = value (0=assert, 1=release). */
+        jtag_reset(b0, b1);
+        return tud_control_status(rhport, request);
+
+    case USBASP_PICO_JTAG_PINSET:
+        /* b0 = drive value bitmap (bit0=TCK, bit1=TMS, bit2=TDI,
+         * bit3=nTRST(assert-low), bit4=nSRST(assert-low)).
+         * Returns sampled TDO in bit0. */
+        reply_buffer[0] = jtag_pinset(b0);
+        return tud_control_xfer(rhport, request, reply_buffer, 1);
+
+    case USBASP_PICO_JTAG_SEQ:
+        /* Bidirectional control transfer:
+         *   OUT (0x40): wLength bytes of packed (tdi,tms,tck) tuples arrive
+         *               in the data stage; we clock them on the ACK stage
+         *               and stash TDO bits in block_scratch (MSB-first).
+         *   IN  (0xC0): host reads back the TDO result bytes. We return
+         *               jtag_seq_result_bytes from the last OUT run. */
+        if (request->bmRequestType_bit.direction == TUSB_DIR_IN) {
+            uint16_t to_ret = jtag_seq_result_bytes;
+            if (to_ret > BLOCK_SCRATCH_SIZE) to_ret = BLOCK_SCRATCH_SIZE;
+            return tud_control_xfer(rhport, request, block_scratch, to_ret);
+        }
+        /* OUT direction: receive the input tuples into block_scratch. */
+        jtag_seq_pending = true;
+        jtag_seq_len = (uint16_t)(wlen < BLOCK_SCRATCH_SIZE ? wlen : BLOCK_SCRATCH_SIZE);
+        return tud_control_xfer(rhport, request, block_scratch, jtag_seq_len);
+
+    case USBASP_PICO_JTAG_SWD_SEQ:
+        /* One-byte SWD sequence. b0 = dir_bitmap, b1 = nbits (1..8),
+         * b2 = data_in. Returns sampled data_out in b0 of the reply. */
+        {
+            uint8_t dout = 0;
+            jtag_swd_seq(b0, b1, b2, &dout);
+            reply_buffer[0] = dout;
+            return tud_control_xfer(rhport, request, reply_buffer, 1);
+        }
+#endif /* USBASP_PICO_ENABLE_JTAG */
 
     default:
         /* Unknown request - stall */
