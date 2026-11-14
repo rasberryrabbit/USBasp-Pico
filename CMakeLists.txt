@@ -48,6 +48,7 @@ target_link_libraries(usbasp-pico PRIVATE
     pico_stdlib
     hardware_gpio
     hardware_pio
+    hardware_spi
     hardware_timer
     hardware_clocks
     hardware_pll
