@@ -113,7 +113,7 @@ extern uint32_t prog_address;
 extern uint16_t prog_nbytes;
 extern uint16_t prog_pagesize;
 extern uint8_t  prog_blockflags;
-extern uint8_t  prog_pagecounter;
+extern uint16_t prog_pagecounter;
 extern prog_state_t prog_state;
 
 /* API consumed by the protocol layer */

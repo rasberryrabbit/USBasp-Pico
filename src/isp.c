@@ -323,6 +323,129 @@ uint8_t isp_read_flash(uint32_t address)
     return isp_transmit(0);
 }
 
+/*
+ * Burst flash read for hardware SPI.
+ *
+ * The old byte-at-a-time path waited for RX after every transmitted SPI
+ * byte (4 waits per AVR flash byte).  Here we keep the PL022 TX/RX FIFOs
+ * moving and only collect received data as it becomes available.  AVR ISP
+ * READ instructions are still four SPI bytes each; this removes per-byte
+ * software serialization without changing the wire protocol or SCK rate.
+ *
+ * Split at the 128-Kbyte extended-address boundary because LOAD EXTENDED
+ * ADDRESS (0x4D) must not be interleaved with an outstanding read stream.
+ */
+void isp_read_flash_block(uint32_t address, uint8_t *buffer, uint16_t length)
+{
+    if (!buffer || length == 0) return;
+
+    if (!s_use_hw_spi) {
+        for (uint16_t i = 0; i < length; i++)
+            buffer[i] = isp_read_flash(address++);
+        return;
+    }
+
+    while (length > 0) {
+        uint32_t bytes_to_boundary = 0x20000u - (address & 0x1FFFFu);
+        uint16_t chunk = length;
+        if ((uint32_t)chunk > bytes_to_boundary)
+            chunk = (uint16_t)bytes_to_boundary;
+
+        isp_update_extended(address);
+
+        spi_hw_t *hw = ISP_SPIHW;
+        uint32_t total_spi_bytes = (uint32_t)chunk * 4u;
+        uint32_t tx_count = 0;
+        uint32_t rx_count = 0;
+
+        while (rx_count < total_spi_bytes) {
+            /* Fill TX FIFO. Each group of four bytes is one AVR READ
+             * instruction: opcode, address high, address low, dummy. */
+            while (tx_count < total_spi_bytes &&
+                   (hw->sr & SPI_SSPSR_TNF_BITS)) {
+                uint32_t byte_addr = address + (tx_count >> 2);
+                uint8_t phase = (uint8_t)(tx_count & 3u);
+                uint8_t out;
+                switch (phase) {
+                case 0: out = (uint8_t)(0x20u | ((byte_addr & 1u) << 3)); break;
+                case 1: out = (uint8_t)(byte_addr >> 9); break;
+                case 2: out = (uint8_t)(byte_addr >> 1); break;
+                default: out = 0; break;
+                }
+                hw->dr = out;
+                tx_count++;
+            }
+
+            /* Drain every available RX byte. Only the fourth byte of each
+             * command contains the requested flash data. */
+            while (hw->sr & SPI_SSPSR_RNE_BITS) {
+                uint8_t in = (uint8_t)hw->dr;
+                if ((rx_count & 3u) == 3u)
+                    buffer[rx_count >> 2] = in;
+                rx_count++;
+            }
+        }
+
+        address += chunk;
+        buffer += chunk;
+        length -= chunk;
+    }
+}
+
+/* Burst page-buffer load.  Each AVR LOAD PROGRAM MEMORY PAGE command is
+ * still four SPI bytes, but the TX/RX FIFOs are pipelined across commands.
+ * The caller performs page commit and ready polling at page boundaries. */
+void isp_write_flash_block(uint32_t address, const uint8_t *buffer, uint16_t length)
+{
+    if (!buffer || length == 0) return;
+
+    if (!s_use_hw_spi) {
+        for (uint16_t i = 0; i < length; i++)
+            (void)isp_write_flash(address++, buffer[i], 0);
+        return;
+    }
+
+    while (length > 0) {
+        uint32_t bytes_to_boundary = 0x20000u - (address & 0x1FFFFu);
+        uint16_t chunk = length;
+        if ((uint32_t)chunk > bytes_to_boundary)
+            chunk = (uint16_t)bytes_to_boundary;
+
+        isp_update_extended(address);
+
+        spi_hw_t *hw = ISP_SPIHW;
+        uint32_t total_spi_bytes = (uint32_t)chunk * 4u;
+        uint32_t tx_count = 0;
+        uint32_t rx_count = 0;
+
+        while (rx_count < total_spi_bytes) {
+            while (tx_count < total_spi_bytes &&
+                   (hw->sr & SPI_SSPSR_TNF_BITS)) {
+                uint32_t byte_addr = address + (tx_count >> 2);
+                uint8_t phase = (uint8_t)(tx_count & 3u);
+                uint8_t out;
+                switch (phase) {
+                case 0: out = (uint8_t)(0x40u | ((byte_addr & 1u) << 3)); break;
+                case 1: out = (uint8_t)(byte_addr >> 9); break;
+                case 2: out = (uint8_t)(byte_addr >> 1); break;
+                default: out = buffer[byte_addr - address]; break;
+                }
+                hw->dr = out;
+                tx_count++;
+            }
+
+            while (hw->sr & SPI_SSPSR_RNE_BITS) {
+                (void)hw->dr; /* discard MISO while loading page buffer */
+                rx_count++;
+            }
+        }
+
+        address += chunk;
+        buffer += chunk;
+        length -= chunk;
+    }
+}
+
 uint8_t isp_write_flash(uint32_t address, uint8_t data, uint8_t pollmode)
 {
     isp_update_extended(address);

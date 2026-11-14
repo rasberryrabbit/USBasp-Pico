@@ -43,6 +43,9 @@ uint8_t isp_enter_programming_mode(void);
 void isp_update_extended(uint32_t address);
 
 uint8_t isp_read_flash(uint32_t address);
+/* Read consecutive flash bytes using the SPI FIFO in burst mode. */
+void isp_read_flash_block(uint32_t address, uint8_t *buffer, uint16_t length);
+void isp_write_flash_block(uint32_t address, const uint8_t *buffer, uint16_t length);
 uint8_t isp_write_flash(uint32_t address, uint8_t data, uint8_t pollmode);
 uint8_t isp_flush_page(uint32_t address, uint8_t pollvalue);
 

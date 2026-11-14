@@ -43,7 +43,7 @@ uint32_t prog_address = 0;
 uint16_t prog_nbytes = 0;
 uint16_t prog_pagesize = 0;
 uint8_t  prog_blockflags = 0;
-uint8_t  prog_pagecounter = 0;
+uint16_t prog_pagecounter = 0;
 prog_state_t prog_state = PROG_STATE_IDLE;
 
 static uint8_t reply_buffer[8];
@@ -98,26 +98,44 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
             uint16_t i = 0;
 
             if (prog_state == PROG_STATE_WRITEFLASH) {
-                for (i = 0; i < len; i++) {
-                    if (prog_pagesize == 0) {
+                if (prog_pagesize == 0) {
+                    /* No page buffering: preserve byte-program + ready polling. */
+                    for (i = 0; i < len && prog_nbytes > 0; i++) {
                         isp_write_flash(prog_address, block_scratch[i], 1);
-                    } else {
-                        isp_write_flash(prog_address, block_scratch[i], 0);
-                        prog_pagecounter--;
-                        if (prog_pagecounter == 0) {
-                            isp_flush_page(prog_address, block_scratch[i]);
-                            prog_pagecounter = (uint8_t)prog_pagesize;
-                        }
+                        prog_nbytes--;
+                        prog_address++;
                     }
-                    prog_nbytes--;
-                    prog_address++;
-                    if (prog_nbytes == 0) {
+                    if (prog_nbytes == 0)
                         prog_state = PROG_STATE_IDLE;
-                        if ((prog_blockflags & PROG_BLOCKFLAG_LAST) &&
-                            (prog_pagecounter != (uint8_t)prog_pagesize)) {
-                            isp_flush_page(prog_address, block_scratch[i]);
+                } else {
+                    /* Page-buffer mode: stream complete groups of page-load
+                     * commands through the SPI FIFO, then commit at page edge. */
+                    while (i < len && prog_nbytes > 0) {
+                        uint16_t n = (uint16_t)(len - i);
+                        if (n > prog_nbytes) n = prog_nbytes;
+                        if (n > prog_pagecounter) n = prog_pagecounter;
+
+                        if (n == 0) break; /* defensive: invalid page state */
+
+                        isp_write_flash_block(prog_address, &block_scratch[i], n);
+                        prog_address += n;
+                        prog_nbytes -= n;
+                        i += n;
+                        prog_pagecounter -= n;
+
+                        if (prog_pagecounter == 0) {
+                            /* prog_address now points one byte past the page. */
+                            isp_flush_page(prog_address - 1u, block_scratch[i - 1u]);
+                            prog_pagecounter = prog_pagesize;
                         }
-                        break;
+
+                        if (prog_nbytes == 0) {
+                            prog_state = PROG_STATE_IDLE;
+                            if ((prog_blockflags & PROG_BLOCKFLAG_LAST) &&
+                                prog_pagecounter != prog_pagesize) {
+                                isp_flush_page(prog_address - 1u, block_scratch[i - 1u]);
+                            }
+                        }
                     }
                 }
             } else if (prog_state == PROG_STATE_WRITEEEPROM) {
@@ -228,8 +246,10 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         {
             uint16_t to_read = wlen;
             if (to_read > BLOCK_SCRATCH_SIZE) to_read = BLOCK_SCRATCH_SIZE;
-            for (uint16_t i = 0; i < to_read && prog_nbytes > 0; i++, prog_nbytes--) {
-                block_scratch[i] = isp_read_flash(prog_address++);
+            if (to_read > 0 && prog_nbytes > 0) {
+                isp_read_flash_block(prog_address, block_scratch, to_read);
+                prog_address += to_read;
+                prog_nbytes -= to_read;
             }
             if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
             return tud_control_xfer(rhport, request, block_scratch, to_read);
@@ -261,7 +281,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         prog_blockflags = b3 & 0x0F;
         prog_pagesize += (((uint16_t)(b3 & 0xF0)) << 4);
         if (prog_blockflags & PROG_BLOCKFLAG_FIRST) {
-            prog_pagecounter = (uint8_t)prog_pagesize;
+            prog_pagecounter = prog_pagesize;
         }
         prog_nbytes = wlen;
         prog_state = PROG_STATE_WRITEFLASH;
