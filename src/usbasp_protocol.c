@@ -301,11 +301,12 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
     case USBASP_PICO_ISP_SETSCK_CUSTOM: {
         /* Custom SCK frequency: wValue=freq[15:0], wIndex=freq[31:16].
-         * Returns actual achieved frequency as 4-byte LE32. */
+         * Returns actual achieved frequency as 4-byte LE32.
+         * Set prog_sck=AUTO so CONNECT preserves this frequency. */
         uint32_t freq = (uint32_t)b0 | ((uint32_t)b1 << 8)
                       | ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24);
         uint32_t actual = isp_set_sck_freq_custom(freq);
-        prog_sck = USBASP_ISP_SCK_AUTO;  /* mark as custom (not a discrete option) */
+        prog_sck = USBASP_ISP_SCK_AUTO;
         reply_buffer[0] = (uint8_t)(actual);
         reply_buffer[1] = (uint8_t)(actual >> 8);
         reply_buffer[2] = (uint8_t)(actual >> 16);

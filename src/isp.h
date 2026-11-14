@@ -16,13 +16,13 @@
 /* Initialize the ISP I/O subsystem (call once at boot). */
 void isp_init(void);
 
-/* Set the SCK speed option (USBASP_ISP_SCK_*). Called before ispConnect(). */
+/* Set the SCK speed option (USBASP_ISP_SCK_*). Called before ispConnect().
+ * AUTO (0) keeps the current frequency (set by custom command or default). */
 void isp_set_sck_option(uint8_t option);
 
-/* Set a custom SCK frequency in Hz (arbitrary, not limited to the discrete
- * USBASP_ISP_SCK_* options). Uses HW SPI0 for freq >= 4 kHz, bit-bang below.
- * Returns the actual achieved frequency (may differ slightly due to divider
- * quantization). Disables AUTO fallback mode. */
+/* Set a custom SCK frequency in Hz (arbitrary, not limited to discrete options).
+ * Uses HW SPI0 for freq >= 4 kHz, bit-bang below. Returns actual achieved freq.
+ * When followed by AUTO-mode CONNECT, this frequency is preserved. */
 uint32_t isp_set_sck_freq_custom(uint32_t freq_hz);
 
 /* Apply the ISP pin layout: drive RESET/SCK/MOSI as outputs, MISO as input,

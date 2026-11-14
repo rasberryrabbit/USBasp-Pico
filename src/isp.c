@@ -35,7 +35,9 @@
 #define ISP_SPI    spi0
 #define ISP_SPIHW  spi_get_hw(ISP_SPI)
 
-/* SCK frequencies (Hz) for each USBASP_ISP_SCK_* option. */
+/* SCK frequencies (Hz) for each USBASP_ISP_SCK_* option.
+ * Options 13-26 are extended frequencies (12.5 kHz steps, 200-362.5 kHz)
+ * for fine-grained SCK control on 1 MHz AVRs. Select via custom command 230. */
 static const uint32_t sck_freq_table[] = {
     [USBASP_ISP_SCK_0_5]   =     500,
     [USBASP_ISP_SCK_1]     =    1000,
@@ -49,6 +51,20 @@ static const uint32_t sck_freq_table[] = {
     [USBASP_ISP_SCK_375]   =  375000,
     [USBASP_ISP_SCK_750]   =  750000,
     [USBASP_ISP_SCK_1500]  = 1500000,
+    [USBASP_ISP_SCK_200]   =  200000,
+    [USBASP_ISP_SCK_212_5] =  212500,
+    [USBASP_ISP_SCK_225]   =  225000,
+    [USBASP_ISP_SCK_237_5] =  237500,
+    [USBASP_ISP_SCK_250]   =  250000,
+    [USBASP_ISP_SCK_262_5] =  262500,
+    [USBASP_ISP_SCK_275]   =  275000,
+    [USBASP_ISP_SCK_287_5] =  287500,
+    [USBASP_ISP_SCK_300]   =  300000,
+    [USBASP_ISP_SCK_312_5] =  312500,
+    [USBASP_ISP_SCK_325]   =  325000,
+    [USBASP_ISP_SCK_337_5] =  337500,
+    [USBASP_ISP_SCK_350]   =  350000,
+    [USBASP_ISP_SCK_362_5] =  362500,
 };
 
 /* Below this frequency, the SPI0 divider cannot reach the target
@@ -56,19 +72,10 @@ static const uint32_t sck_freq_table[] = {
 #define HW_SPI_MIN_FREQ  4000
 
 static bool     s_use_hw_spi      = false;
-static uint32_t s_sck_freq        = 375000;
+static uint32_t s_sck_freq        = 250000;  /* default: 250 kHz */
 static uint16_t s_bb_half_us      = 1;   /* bit-bang half-period (us) */
 static bool     s_spi_initialized = false;
-static bool     s_auto_mode       = false;
 static uint8_t  isp_hiaddr        = 0;
-
-/* AUTO mode fallback sequence (Hz). All >= 4 kHz so HW SPI handles them.
- * 250 kHz = fCPU/4 for 1 MHz ATtiny85 (CKDIV8 default) - exact, no error.
- * 200 kHz = safety margin for 1 MHz parts with clock tolerance.
- * 187.5 kHz = standard USBasp option, very conservative. */
-static const uint32_t auto_freqs[] = { 250000, 200000, 187500 };
-#define AUTO_FREQ_COUNT  (int)(sizeof(auto_freqs) / sizeof(auto_freqs[0]))
-#define AUTO_ATTEMPTS_PER_FREQ  6
 
 /* ---- Direct SIO register helpers (1 cycle each, no SDK overhead) ---- */
 #define SCK_MASK   (1u << PIN_ISP_SCK)
@@ -98,8 +105,16 @@ static void set_sck_freq(uint32_t freq)
     s_sck_freq = freq;
     if (freq >= HW_SPI_MIN_FREQ) {
         s_use_hw_spi = true;
-        if (s_spi_initialized)
-            spi_set_baudrate(ISP_SPI, freq);
+        if (s_spi_initialized) {
+            /* Full SPI reinit via spi_init(): resets SSP block, writes
+             * SSPCPSR (prescale) while SSE=0 (PL022 requires this),
+             * sets format, then enables SSE. Only called before pins
+             * are connected — never during an active programming session. */
+            spi_init(ISP_SPI, freq);
+            spi_set_format(ISP_SPI, 8, SPI_CPHA_0, SPI_CPOL_0, SPI_MSB_FIRST);
+            while (ISP_SPIHW->sr & SPI_SSPSR_RNE_BITS)
+                (void)ISP_SPIHW->dr;
+        }
     } else {
         s_use_hw_spi = false;
         s_bb_half_us = (uint16_t)(1000000u / (2u * freq));
@@ -151,11 +166,11 @@ static inline bool try_prog_entry(void)
 /* ---- RESET pulse helper (high then low, for retry between attempts) ---- */
 static inline void reset_pulse(void)
 {
-    busy_wait_us_32(10);
+    busy_wait_us_32(100);
     reset_high();
-    busy_wait_us_32(10);
+    busy_wait_us_32(100);
     reset_low();
-    busy_wait_us_32(20);
+    busy_wait_us_32(100);
 }
 
 /* ==================== Public API ==================== */
@@ -173,9 +188,10 @@ void isp_init(void)
     gpio_disable_pulls(PIN_ISP_RESET);
 
     /* Pre-initialize SPI0 peripheral (pins not yet connected).
-     * spi_init resets, sets baudrate, enables. Format = 8-bit Mode 0 MSB. */
+     * spi_init resets, sets baudrate, enables. Format = 8-bit Mode 0 MSB.
+     * Default 250 kHz = fCPU/4 for 1 MHz ATtiny85 (CKDIV8 default). */
     if (!s_spi_initialized) {
-        spi_init(ISP_SPI, 375000);
+        spi_init(ISP_SPI, 250000);
         spi_set_format(ISP_SPI, 8, SPI_CPHA_0, SPI_CPOL_0, SPI_MSB_FIRST);
         s_spi_initialized = true;
     }
@@ -183,34 +199,27 @@ void isp_init(void)
 
 void isp_set_sck_option(uint8_t option)
 {
-    s_auto_mode = false;
-
-    if (option == USBASP_ISP_SCK_AUTO) {
-        /* AUTO: start at 250 kHz = fCPU/4 for 1 MHz ATtiny85 (CKDIV8 default).
-         * Auto-fallback in isp_enter_programming_mode tries 200k, 187.5k. */
-        s_auto_mode = true;
-        set_sck_freq(250000);
+    /* AUTO: keep current frequency (set by custom command 230 or default).
+     * No auto-fallback — fixed-speed mode. This lets the user set an
+     * exact frequency via command 230 before running avrdude without -B. */
+    if (option == USBASP_ISP_SCK_AUTO)
         return;
-    }
 
-    if (option > USBASP_ISP_SCK_1500)
-        option = USBASP_ISP_SCK_375;
+    /* Clamp out-of-range to 250 kHz (safe default for 1 MHz AVRs) */
+    if (option > USBASP_ISP_SCK_MAX)
+        option = USBASP_ISP_SCK_250;
 
     set_sck_freq(sck_freq_table[option]);
 }
 
 uint32_t isp_set_sck_freq_custom(uint32_t freq_hz)
 {
-    /* Custom frequency: disable AUTO fallback, set exact frequency.
+    /* Custom frequency: set exact Hz value (not limited to discrete options).
      * Clamp to a sane range (500 Hz .. 8 MHz) to protect the SPI divider. */
-    s_auto_mode = false;
-
     if (freq_hz < 500)    freq_hz = 500;
     if (freq_hz > 8000000) freq_hz = 8000000;
 
     set_sck_freq(freq_hz);
-
-    /* Return actual achieved frequency (for HW SPI, the SDK may quantize) */
     return s_sck_freq;
 }
 
@@ -281,30 +290,10 @@ uint8_t isp_transmit(uint8_t send)
 
 uint8_t isp_enter_programming_mode(void)
 {
-    if (s_auto_mode) {
-        /* Auto-negotiation: try 250 kHz, then 200 kHz, then 187.5 kHz.
-         * All frequencies are >= 4 kHz so HW SPI handles them — no GPIO
-         * mode switching needed during fallback. */
-        for (int fi = 0; fi < AUTO_FREQ_COUNT; fi++) {
-            set_sck_freq(auto_freqs[fi]);
-
-            /* RESET pulse before each frequency attempt */
-            reset_low();
-            busy_wait_us_32(20);
-            reset_high();
-            busy_wait_us_32(20);
-            reset_low();
-            busy_wait_us_32(20);
-
-            for (int a = 0; a < AUTO_ATTEMPTS_PER_FREQ; a++) {
-                if (try_prog_entry()) return 0;
-                reset_pulse();
-            }
-        }
-        return 1;  /* all frequencies failed */
-    }
-
-    /* Fixed speed mode: retry up to 32 times */
+    /* Fixed-speed mode: retry up to 32 times at the current SCK frequency.
+     * No auto-fallback — frequency is set once before connect via -B option,
+     * custom command 230, or the 250 kHz default. This is more reliable than
+     * dynamic frequency changes mid-session (which can corrupt SSP state). */
     uint8_t count = 32;
     while (count--) {
         if (try_prog_entry()) return 0;

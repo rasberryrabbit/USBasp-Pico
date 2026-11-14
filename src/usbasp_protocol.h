@@ -86,7 +86,7 @@
                                            *      wValue = freq[15:0], wIndex = freq[31:16].
                                            *      Reply: 4 bytes = actual achieved freq (LE32).
                                            *      Uses HW SPI0 for freq >= 4 kHz, bit-bang below.
-                                           *      Call before CONNECT. Disables AUTO fallback. */
+                                           *      Call before CONNECT. AUTO mode keeps this freq. */
 
 /* Capabilities flags. bit 0 = TPI (original USBasp), bit 1 = HVSP,
  * bit 2 = SWIO, bit 3 = JTAG/SWD (v1.10). */
@@ -124,6 +124,24 @@ typedef enum {
 #define USBASP_ISP_SCK_375     10  /* 375 kHz (default) */
 #define USBASP_ISP_SCK_750     11  /* 750 kHz */
 #define USBASP_ISP_SCK_1500    12  /* 1.5 MHz */
+/* Extended frequencies (12.5 kHz steps, 200-362.5 kHz).
+ * Not in standard avrdude table — select via custom command 230
+ * or modified avrdude. Enables fine-grained SCK for 1 MHz AVRs. */
+#define USBASP_ISP_SCK_200     13  /* 200 kHz */
+#define USBASP_ISP_SCK_212_5   14  /* 212.5 kHz */
+#define USBASP_ISP_SCK_225     15  /* 225 kHz */
+#define USBASP_ISP_SCK_237_5   16  /* 237.5 kHz */
+#define USBASP_ISP_SCK_250     17  /* 250 kHz */
+#define USBASP_ISP_SCK_262_5   18  /* 262.5 kHz */
+#define USBASP_ISP_SCK_275     19  /* 275 kHz */
+#define USBASP_ISP_SCK_287_5   20  /* 287.5 kHz */
+#define USBASP_ISP_SCK_300     21  /* 300 kHz */
+#define USBASP_ISP_SCK_312_5   22  /* 312.5 kHz */
+#define USBASP_ISP_SCK_325     23  /* 325 kHz */
+#define USBASP_ISP_SCK_337_5   24  /* 337.5 kHz */
+#define USBASP_ISP_SCK_350     25  /* 350 kHz */
+#define USBASP_ISP_SCK_362_5   26  /* 362.5 kHz */
+#define USBASP_ISP_SCK_MAX     26  /* highest valid option code */
 
 /* USB identifiers used by USBasp (matches avrdude's usbasp.c) */
 #define USBASP_VID    0x16C0   /* obdev's shared VID */
