@@ -48,6 +48,29 @@ prog_state_t prog_state = PROG_STATE_IDLE;
 
 static uint8_t reply_buffer[8];
 
+/*
+ * USBasp commands with no meaningful response are still sent by upstream
+ * avrdude as IN control transfers with a 4-byte wLength. In particular,
+ * USBASP_FUNC_SETLONGADDRESS is issued before every READFLASH block.
+ *
+ * A status-only response skips the required IN data stage. The host then
+ * waits for its 5-second libusb control-transfer timeout on every block.
+ * For IN requests with wLength > 0, send a zero-length IN data packet (ZLP)
+ * through tud_control_xfer(); for wLength == 0, use the normal status stage.
+ */
+static bool usbasp_control_empty_reply(uint8_t rhport,
+                                       tusb_control_request_t const *request)
+{
+    if (request->wLength == 0)
+        return tud_control_status(rhport, request);
+
+    if (request->bmRequestType_bit.direction == TUSB_DIR_IN)
+        return tud_control_xfer(rhport, request, reply_buffer, 0);
+
+    /* An OUT request with a nonzero data stage must provide a receive buffer. */
+    return false;
+}
+
 /* Scratch buffer for block transfers. EP0 full-speed max packet is 64 bytes;
  * avrdude requests up to 4096 bytes per control transfer. */
 #define BLOCK_SCRATCH_SIZE  4096
@@ -224,12 +247,12 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         prog_address_newmode = false;
         led_activity_on();
         isp_connect();
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_DISCONNECT:
         isp_disconnect();
         led_activity_off();
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TRANSMIT:
         reply_buffer[0] = isp_transmit(b0);
@@ -312,7 +335,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         prog_address_newmode = true;
         prog_address = ((uint32_t)b3 << 24) | ((uint32_t)b2 << 16) |
                        ((uint32_t)b1 << 8)  | b0;
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_SETISPSCK:
         prog_sck = b0;
@@ -343,7 +366,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         led_activity_on();
         busy_wait_us_32(8);
         tpi_init();
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TPI_DISCONNECT:
         tpi_send_byte(TPI_OP_SSTCS(TPISR));
@@ -357,7 +380,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         gpio_set_dir(PIN_ISP_SCK, GPIO_IN);
         gpio_set_dir(PIN_ISP_MOSI, GPIO_IN);
         led_activity_off();
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TPI_RAWREAD:
         reply_buffer[0] = tpi_recv_byte();
@@ -365,7 +388,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
     case USBASP_FUNC_TPI_RAWWRITE:
         tpi_send_byte(b0);
-        return tud_control_status(rhport, request);
+        return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TPI_READBLOCK:
         prog_address = ((uint32_t)b1 << 8) | b0;
