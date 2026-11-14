@@ -20,7 +20,7 @@ jobs:
 
       - name: 3. 공식 Pico SDK 다운로드
         run: |
-          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com $GITHUB_WORKSPACE/pico-sdk
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/raspberrypi/pico-sdk $GITHUB_WORKSPACE/pico-sdk
 
       - name: 4. CMake 구성 및 컴파일
         env:
