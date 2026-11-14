@@ -4,6 +4,39 @@ USBasp 호환 AVR 프로그래머 + SWIO (CH32V003) + JTAG/SWD 펌웨어 (CDC �
 + minichlink 통합 패치 포함
 + v1.9: MOSI/SDI 핀 공유 (HVSP 전용 핀 1개 절약)
 + v1.10: JTAG/SWD 백엔드 추가 (pyOCD + OpenOCD 호환)
++ v1.10-pio: SWIO 백엔드 PIO 전환 (정밀 타이밍 + 더블리드 버그 수정)
+
+## v1.10-pio 변경 사항
+
+### 문제
+- 기존 `swio.c` 비트뱅 구현에 **더블리드 버그** 발견
+- 읽기 경로에서 `swio_read_bit()` 가 비트당 2회 호출 → 첫 샘플 폐기, 다음 비트 값 읽음
+- 결과: 모든 레지스터 읽기가 `0xFFFFFFFF` 반환 (marchid, HARTINFO 등)
+
+### 수정
+- `src/swio.pio` (신규): PIO 어셈블리로 단일 와이어 SDI 비트 타이밍 정밀 제어
+- `src/swio.c` (교체): PIO 기반 구현으로 전면 교체, 동일 API 유지 (드롭인)
+- 더블리드 버그 제거: 각 비트 정확히 1회 읽기
+- `CMakeLists.txt`: `pico_generate_pio_header()` 추가
+- `pico_sdk_import.cmake` (신규): SDK 부트스트랩 파일 포함
+
+### 핵심 설계
+- **SWCLK 핀 불필요**: WCH SDI는 단선 시간기반 프로토콜 (클럭 라인 없음)
+- **단일 핀**: GP12 (SWIO), 오픈드레인 + 외부 풀업 (4.7k-10k)
+- **PIO 자원**: pio0 / SM0 (ISP/HVSP/JTAG은 순수 GPIO라 충돌 없음)
+- **타이밍**: 50 PIO 사이클 = 4µs 하프비트 (125kHz 비트레이트), 클럭 디바이더 자동 계산
+
+### 빌드 (사용자 환경)
+```bash
+# 사전 요구사항: arm-none-eabi-gcc, cmake, pico-sdk (pioasm 포함)
+export PICO_SDK_PATH=/path/to/pico-sdk
+cmake -B build -S .
+cmake --build build
+# 결과: build/usbasp-pico.uf2
+```
+또는 Windows에서 Pico SDK + Visual Studio Build Tools 사용.
+
+Pico를 BOOTSEL 모드로 연결 후 `build/usbasp-pico.uf2` 드래그.
 
 ## 주요 특징
 

@@ -1,0 +1,87 @@
+;
+; swio.pio - WCH SDI pulse-width-modulated single-wire debug protocol
+;
+; PROTOCOL (corrected per reference cnlohr/rv003usb bitbang_rvswdio):
+;   Bit encoding = PULSE WIDTH, not level:
+;     '1' = SHORT low pulse (~128 ns) then HIGH for remainder
+;     '0' = LONG  low pulse (~512 ns) then HIGH for remainder
+;   Line idles HIGH (open-drain + external 4.7k-10k pull-up).
+;   The target distinguishes bits by the LOW-pulse DURATION.
+;
+; Frame (41 bits):
+;   start(1) + 7-bit addr(MSB first) + R/W(1=write,0=read) + 32-bit data(MSB first)
+;
+; Command format (one 32-bit TX FIFO word per bit):
+;   bit 0: is_read   (1 = read from target, 0 = write to target)
+;   bit 1: write_val (1 = '1'/short pulse, 0 = '0'/long pulse; ignored for reads)
+;
+; Read result (one 32-bit RX FIFO word):
+;   bits [4:0] = X register value (31 = no extension = '1'; low = long extension = '0')
+;   C interprets: X >= 16 -> bit '1', X < 16 -> bit '0'
+;
+; Timing at 125 MHz sys_clk, divider = 1 (8 ns/cycle):
+;   '1' short pulse: 16 cycles = 128 ns
+;   '0' long pulse:  ~63 cycles = 504 ns  (ratio ~1:4, clearly distinguishable)
+;   Read marker:     16 cycles = 128 ns (same as '1' pulse)
+;   Read extension count: 2 cycles/iteration, max 31x2 = 62 cycles
+;
+; SPDX-License-Identifier: BSD-3-Clause
+;
+
+.program swio
+
+bit_xfer:
+    pull                  ; wait for command word from C
+    out x, 1              ; extract is_read
+    jmp !x do_write       ; X=0 -> write; X=1 -> read
+
+    ; ===================== READ MODE =====================
+    ; Drive a short-low marker, release, then count how long the
+    ; target holds the line LOW (its pulse-width extension).
+    set pindirs, 1        ; output
+    set pins, 0           ; drive low (marker start)
+    set y, 13             ; marker duration (~16 cycles w/ overhead)
+r_mk:
+    jmp y-- r_mk
+    set pindirs, 0        ; release marker (input, pull-up drives high)
+    set x, 31             ; max count (X counts DOWN)
+r_cnt:
+    jmp pin r_done        ; if pin HIGH (target released), stop counting
+    jmp x-- r_cnt         ; else decrement X (2 cycles/iter, max 62 cycles)
+r_done:
+    ; X = 31 - (extension_cycles / 2)
+    ; '1' bit: target released ~same time as host -> X ~31
+    ; '0' bit: target held low ~48 more cycles -> X ~7
+    set y, 20             ; fill remainder of bit period
+r_fill:
+    jmp y-- r_fill [3]    ; 20 x 4 = 80 cycles
+    mov isr, x            ; copy X to ISR
+    push                  ; push to RX FIFO
+    jmp bit_xfer          ; loop back
+
+    ; ===================== WRITE MODE =====================
+do_write:
+    out x, 1              ; extract write_val
+    set pindirs, 1        ; output
+    set pins, 0           ; drive low (pulse start)
+    jmp !x w_long         ; if val=0, long pulse ('0')
+
+    ; --- Write '1': short low pulse (~16 cycles) ---
+    set y, 12
+w_short:
+    jmp y-- w_short
+    jmp w_release
+
+    ; --- Write '0': long low pulse (~63 cycles) ---
+w_long:
+    set y, 15
+w_long_lo:
+    jmp y-- w_long_lo [3] ; 15 x 4 = 60 cycles + overhead ~63
+
+    ; --- Shared release + high wait ---
+w_release:
+    set pindirs, 0        ; release (line goes HIGH via pull-up)
+    set y, 15
+w_hi:
+    jmp y-- w_hi [3]      ; 15 x 4 = 60 cycles HIGH
+    jmp bit_xfer          ; loop back

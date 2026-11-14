@@ -34,6 +34,11 @@ add_executable(usbasp-pico
     src/usbasp_protocol.c
 )
 
+# v1.10-pio: generate swio.pio.h from the PIO assembly (swio.pio).
+# The generated header is included by swio.c and provides swio_program
+# and swio_program_get_default_config().
+pico_generate_pio_header(usbasp-pico ${CMAKE_CURRENT_LIST_DIR}/src/swio.pio)
+
 # Project-local includes (tusb_config.h lives here)
 target_include_directories(usbasp-pico PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/src
