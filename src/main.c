@@ -295,11 +295,15 @@ int main(void)
     /* Set system clock to 125 MHz (default), but ensure USB PLL is on */
     set_sys_clock_khz(125000, true);
 
+#if CFG_TUD_CDC
     board_init();
+#endif
     led_status_init();
 
+#if CFG_TUD_CDC
     /* Unique-id -> serial number string */
     fill_serial();
+#endif
 
     /* Initialize ISP backend */
     isp_init();
@@ -317,7 +321,9 @@ int main(void)
         .speed = TUSB_SPEED_FULL,
     };
     tud_rhport_init(BOARD_TUD_RHPORT, &rh_init);
+#if CFG_TUD_CDC
     board_init_after_tusb();
+#endif
 
     /* CDC 비활성화 빌드 - 동기 문자 출력 없음 */
 
