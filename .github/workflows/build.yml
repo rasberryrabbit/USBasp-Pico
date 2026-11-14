@@ -1,0 +1,37 @@
+name: Build Raspberry Pi Pico Firmware
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch: # GitHub 웹페이지에서 수동으로 빌드 버튼을 누를 수 있게 함
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 1. 내 소스 코드 가져오기
+        uses: actions/checkout@v4
+
+      - name: 2. ARM 컴파일러 및 빌드 도구 설치
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake gcc-arm-none-eabi libnewlib-arm-none-eabi build-essential libstdc++-arm-none-eabi-newlib
+
+      - name: 3. 공식 Pico SDK 다운로드
+        run: |
+          git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com $GITHUB_WORKSPACE/pico-sdk
+
+      - name: 4. CMake 구성 및 컴파일
+        env:
+          PICO_SDK_PATH: ${{ github.workspace }}/pico-sdk
+        run: |
+          mkdir build && cd build
+          cmake ..
+          make -j$(nproc)
+
+      - name: 5. 완성된 펌웨어(.uf2) 업로드
+        uses: actions/upload-artifact@v4
+        with:
+          name: pico-firmware
+          path: build/*.uf2
