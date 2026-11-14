@@ -1,29 +1,29 @@
 /*
  * swio.c - SWIO (Single-Wire I/O) backend for WCH CH32V003 RISC-V MCU
  *
- * v1.10-pio2: PWM pulse-width protocol (corrected per cnlohr/rv003usb reference).
+ * v1.11: fully ported from picorvd (PicoSWIO.cpp + singlewire.pio).
  *
- * PROTOCOL CORRECTION:
- *   The original swio.c used LEVEL encoding ('1'=high, '0'=low for 4us).
- *   The real WCH SDI protocol uses PULSE-WIDTH encoding:
- *     '1' = short low pulse (~128ns) + high remainder
- *     '0' = long low pulse  (~512ns) + high remainder
- *   Line idles HIGH (open-drain + external pull-up).
- *   The target measures the low-pulse DURATION to distinguish bits.
+ * Compared to the previous v1.10 backend this version fixes the actual
+ * WCH SDI protocol, which the old code got wrong in several ways:
  *
- *   Frame: start(1) + 7-addr(MSB first) + R/W(1=write,0=read) + 32-data(MSB first)
- *   The original had start=0 (WRONG), data LSB-first (WRONG), and level
- *   encoding (WRONG). All fixed here.
+ *   1. Address and data must be BIT-INVERTED on the wire
+ *      (old code sent them non-inverted -> target never decoded frames).
+ *   2. R/W bit on the wire: 1 = read, 0 = write.
+ *   3. Bit timing is a hardware-generated ~2T/8T pulse pair
+ *      (clkdiv = 12 -> 96ns/tick, WCH "normal" mode; the old bit-bang
+ *      commands produced jittered gaps and a '0' pulse below the
+ *      6T minimum, both of which can desync the target).
+ *   4. Reads are sampled by the PIO itself (in pins + autopush),
+ *      not by software side-counting.
+ *   5. Target reset is picorvd's sequence: short low pulse, then
+ *      SHDWCFGR/CFGR unlock (0x5AA50400) and DMCONTROL reset - without
+ *      the unlock the CH32V003 debug module stays silent.
  *
- *   Read mechanism: host drives a short-low marker, releases, then counts
- *   how long the target holds the line low. Short extension = '1',
- *   long extension = '0'. This matches the reference's pulse-width capture.
+ * Frame (MSB-first): start('1') + 7-bit ~addr + R/W + 32-bit ~data.
  *
  * Pin: GP12 (SWIO), open-drain with external 4.7k-10k pull-up.
- * No SWCLK pin - protocol is self-timed via pulse widths.
- *
- * PIO: pio0 / SM0. Clock divider = 1 (8ns/cycle at 125MHz).
- * JMP pin = SWIO (for read-path pulse-width measurement).
+ * PIO: pio0 / SM0 (sole user of pio0). OUT pin level = 0 always, so
+ * enabling the pin direction (sideset) drives the line low.
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -35,143 +35,125 @@
 #include "swio.h"
 #include "swio.pio.h"
 
-#define SWIO_PIO         pio0
-#define SWIO_SM          0
+#define SWIO_PIO    pio0
+#define SWIO_SM     0
 
-/* Read threshold: X >= READ_THRESHOLD -> bit '1', else '0'.
- * X=31 means no extension (target released immediately = '1').
- * X~7 means ~48-cycle extension (target held low = '0'). */
-#define READ_THRESHOLD   16
+/* WCH-specific debug interface config registers */
+#define WCH_DM_CFGR     0x7D
+#define WCH_DM_SHDWCFGR 0x7E
 
-static PIO    s_pio    = SWIO_PIO;
-static uint   s_sm     = SWIO_SM;
+/* RISC-V debug spec registers */
+#define DM_DMCONTROL    0x10
+
 static uint   s_offset = 0;
 static bool   s_ready  = false;
 
+uint32_t swio_xfer(uint8_t reg, bool rw, uint32_t data);
+
+static inline uint32_t swio_get(uint8_t addr)
+{
+    /* Wire: ((~addr)<<1) | 1 -> READ. Reply comes back MSB-first via
+     * autopush; one RX word per frame, FIFO-ordered with commands. */
+    pio_sm_put_blocking(SWIO_PIO, SWIO_SM,
+                        (((~addr) & 0x7F) << 1) | 1);
+    return pio_sm_get_blocking(SWIO_PIO, SWIO_SM);
+}
+
+static inline void swio_put(uint8_t addr, uint32_t data)
+{
+    /* Wire: ((~addr)<<1) | 0 -> WRITE, then the inverted data word.
+     * The PIO stalls on the second pull until the first frame is out,
+     * so back-to-back writes stay correctly ordered. */
+    pio_sm_put_blocking(SWIO_PIO, SWIO_SM,
+                        (((~addr) & 0x7F) << 1) | 0);
+    pio_sm_put_blocking(SWIO_PIO, SWIO_SM, ~data);
+}
+
 void swio_init(void)
 {
+    /* Repeated calls (CDC 'p' / SWIO_INIT request): restart cleanly
+     * without re-uploading the program. */
     if (s_ready) {
-        pio_sm_set_enabled(s_pio, s_sm, true);
-        pio_sm_set_consecutive_pindirs(s_pio, s_sm, PIN_SWIO, 1, false);
-        busy_wait_us_32(50);
+        pio_sm_set_enabled(SWIO_PIO, SWIO_SM, false);
+        pio_sm_clear_fifos(SWIO_PIO, SWIO_SM);
+        pio_sm_restart(SWIO_PIO, SWIO_SM);
+        pio_sm_set_consecutive_pindirs(SWIO_PIO, SWIO_SM, PIN_SWIO, 1, false);
+        pio_sm_set_enabled(SWIO_PIO, SWIO_SM, true);
+        busy_wait_us_32(20);
         return;
     }
 
-    s_offset = pio_add_program(s_pio, &swio_program);
-    pio_sm_claim(s_pio, s_sm);
+    /* We are pio0's only user - clear its instruction memory like picorvd. */
+    pio_sm_claim(SWIO_PIO, SWIO_SM);
+    pio_clear_instruction_memory(SWIO_PIO);
+    s_offset = pio_add_program(SWIO_PIO, &swio_program);
 
-    pio_gpio_init(s_pio, PIN_SWIO);
+    /* GPIO: low drive strength + slow slew on the open-drain line. */
+    gpio_set_drive_strength(PIN_SWIO, GPIO_DRIVE_STRENGTH_2MA);
+    gpio_set_slew_rate(PIN_SWIO, GPIO_SLEW_RATE_SLOW);
+    gpio_set_function(PIN_SWIO, GPIO_FUNC_PIO0);
     gpio_pull_up(PIN_SWIO);
 
     pio_sm_config c = swio_program_get_default_config(s_offset);
-    sm_config_set_set_pins(&c, PIN_SWIO, 1);   /* SET pins = SWIO */
-    sm_config_set_in_pins(&c,  PIN_SWIO);       /* IN pin  = SWIO */
-    sm_config_set_jmp_pin(&c,  PIN_SWIO);       /* JMP pin = SWIO (read path) */
+    sm_config_set_sideset(&c, 1, /*optional*/ false, /*pindirs*/ true);
+    sm_config_set_out_pins    (&c, PIN_SWIO, 1);
+    sm_config_set_in_pins     (&c, PIN_SWIO);
+    sm_config_set_set_pins    (&c, PIN_SWIO, 1);
+    sm_config_set_sideset_pins(&c, PIN_SWIO);
 
-    /* LSB-first shift, no autopull/push (PIO does manual pull+push). */
-    sm_config_set_out_shift(&c, true, false, 32);
-    sm_config_set_in_shift(&c, true, false, 32);
+    /* MSB-first shifts; autopush(32) on reads, manual pull on writes. */
+    sm_config_set_out_shift(&c, /*shift_right*/ false, /*autopull*/ false, 32);
+    sm_config_set_in_shift(&c, /*shift_right*/ false, /*autopush*/ true, 32);
 
-    /* Divider = 1: at 125MHz, 1 PIO cycle = 8ns.
-     * '1' pulse = 16 cycles = 128ns, '0' pulse = ~63 cycles = 504ns. */
-    float div = (float)clock_get_hz(clk_sys) / 125000000.0f;
-    if (div < 1.0f) div = 1.0f;
-    sm_config_set_clkdiv(&c, div);
+    /* 125MHz / 12 = 96ns per tick - matches WCH "normal" mode (T~100ns). */
+    sm_config_set_clkdiv(&c, 12);
 
-    pio_sm_init(s_pio, s_sm, s_offset, &c);
-    pio_sm_set_consecutive_pindirs(s_pio, s_sm, PIN_SWIO, 1, false);
-    pio_sm_set_enabled(s_pio, s_sm, true);
+    pio_sm_init(SWIO_PIO, SWIO_SM, s_offset, &c);
+
+    /* OUT pin level 0: when the SM enables the pin (side 1) it drives
+     * LOW; when released (side 0) the pull-up idles the line HIGH. */
+    pio_sm_set_pins(SWIO_PIO, SWIO_SM, 0);
+    pio_sm_set_consecutive_pindirs(SWIO_PIO, SWIO_SM, PIN_SWIO, 1, false);
+    pio_sm_set_enabled(SWIO_PIO, SWIO_SM, true);
 
     s_ready = true;
-    busy_wait_us_32(50);
-}
-
-/* ---- Write one PWM bit: val=1 -> short pulse, val=0 -> long pulse ---- */
-static inline void swio_pio_write_bit(bool val)
-{
-    /* Command: bit0=is_read(0), bit1=write_val */
-    pio_sm_put_blocking(s_pio, s_sm, val ? 0x02 : 0x00);
-}
-
-/* ---- Read one PWM bit: returns true if target pulse was short ('1') ---- */
-static inline bool swio_pio_read_bit(void)
-{
-    /* Command: bit0=is_read(1) */
-    pio_sm_put_blocking(s_pio, s_sm, 0x01);
-    uint32_t x_val = pio_sm_get_blocking(s_pio, s_sm) & 0x1F;
-    return x_val >= READ_THRESHOLD;
-}
-
-/* ---- Wait for all queued write bits to finish ---- */
-static inline void swio_pio_drain(void)
-{
-    while (!pio_sm_is_tx_fifo_empty(s_pio, s_sm))
-        tight_loop_contents();
-    busy_wait_us_32(2);
+    busy_wait_us_32(20);
 }
 
 uint32_t swio_xfer(uint8_t reg, bool rw, uint32_t data)
 {
-    uint32_t reply = 0;
-
-    /* ---- Start bit = '1' (short pulse) ---- */
-    swio_pio_write_bit(1);
-
-    /* ---- 7-bit register address, MSB first ---- */
-    for (int i = 6; i >= 0; i--)
-        swio_pio_write_bit((reg >> i) & 1);
-
-    /* ---- R/W bit: write=1 (short), read=0 (long) ---- */
-    swio_pio_write_bit(rw ? 1 : 0);
-
-    /* ---- 32-bit data field, MSB first ---- */
     if (rw) {
-        /* WRITE: host drives data bits */
-        for (int i = 31; i >= 0; i--)
-            swio_pio_write_bit((data >> i) & 1);
-        swio_pio_drain();
-        reply = data;
+        /* Host writes `data` to register `reg`. */
+        swio_put(reg, data);
+        return data;
     } else {
-        /* READ: drain header, then read 32 bits MSB first.
-         * Use pipelined reads to keep markers back-to-back (minimize gaps
-         * that could cause the target to lose sync). */
-        swio_pio_drain();
-
-        /* Pre-fill TX FIFO with 4 read commands so the PIO processes
-         * them back-to-back while we drain RX. */
-        int pushed = 0;
-        for (int i = 0; i < 4; i++) {
-            pio_sm_put_blocking(s_pio, s_sm, 0x01);
-            pushed++;
-        }
-
-        for (int i = 31; i >= 0; i--) {
-            /* Push next read command if we still have bits to go
-             * (keeps TX FIFO topped up; pio_sm_put_blocking throttles
-             * naturally when FIFO is full). */
-            if (pushed < 32) {
-                pio_sm_put_blocking(s_pio, s_sm, 0x01);
-                pushed++;
-            }
-            uint32_t x_val = pio_sm_get_blocking(s_pio, s_sm) & 0x1F;
-            if (x_val >= READ_THRESHOLD)
-                reply |= (1u << i);
-        }
+        /* Host reads register `reg`; the target's reply is returned as-is
+         * (same as picorvd: PicoSWIO::get returns the raw PIO word). */
+        return swio_get(reg);
     }
-
-    /* Inter-frame gap: line is already HIGH (PIO idles released). */
-    busy_wait_us_32(2);
-
-    return reply;
 }
 
 void swio_reset_target(void)
 {
-    /* 50 x '1' pulses (short low pulses) to reset the debug module.
-     * Each '1' is a real short-low pulse now (not a no-op like before). */
-    for (int i = 0; i < 50; i++)
-        swio_pio_write_bit(1);
-    /* Terminate with a '0' (long pulse) as start-of-frame marker. */
-    swio_pio_write_bit(0);
-    swio_pio_drain();
+    /* Jitter-free long low pulse via raw SIO registers (per picorvd):
+     * >16 SWIO clock periods at HSI/3 = 8MHz forces the debug module
+     * into reset. 10us is a wide margin above the 2us minimum. */
+    sio_hw->gpio_clr    = (1u << PIN_SWIO);
+    sio_hw->gpio_oe_set = (1u << PIN_SWIO);
+    io_bank0_hw->io[PIN_SWIO].ctrl =
+        GPIO_FUNC_SIO << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB;
+    busy_wait_us_32(10);
+    sio_hw->gpio_oe_clr = (1u << PIN_SWIO);
+    io_bank0_hw->io[PIN_SWIO].ctrl =
+        GPIO_FUNC_PIO0 << IO_BANK0_GPIO0_CTRL_FUNCSEL_LSB;
+    busy_wait_us_32(10);
+
+    /* picorvd's debug-module bring-up: unlock the SDI output pin and
+     * reset the DM. Without the SHDWCFGR/CFGR unlock the target's debug
+     * interface does not respond to register accesses. */
+    swio_put(WCH_DM_SHDWCFGR, 0x5AA50400);
+    swio_put(WCH_DM_CFGR,     0x5AA50400);
+    swio_put(DM_DMCONTROL,    0x00000000);
+    swio_put(DM_DMCONTROL,    0x00000001);
+    busy_wait_us_32(20);
 }

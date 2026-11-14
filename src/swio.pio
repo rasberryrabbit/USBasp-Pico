@@ -1,87 +1,72 @@
 ;
-; swio.pio - WCH SDI pulse-width-modulated single-wire debug protocol
+; swio.pio - WCH SDI single-wire debug protocol
+;            (ported from picorvd singlewire.pio)
 ;
-; PROTOCOL (corrected per reference cnlohr/rv003usb bitbang_rvswdio):
-;   Bit encoding = PULSE WIDTH, not level:
-;     '1' = SHORT low pulse (~128 ns) then HIGH for remainder
-;     '0' = LONG  low pulse (~512 ns) then HIGH for remainder
-;   Line idles HIGH (open-drain + external 4.7k-10k pull-up).
-;   The target distinguishes bits by the LOW-pulse DURATION.
+; Open-drain emulation via SIDESET on PINDIRS: the OUT-pin level is held
+; at 0, so "side 1" drives the line LOW and "side 0" releases it
+; (external 4.7k-10k pull-up idles the line HIGH).
 ;
-; Frame (41 bits):
-;   start(1) + 7-bit addr(MSB first) + R/W(1=write,0=read) + 32-bit data(MSB first)
+; Frame (host -> target), all fields MSB-first:
+;   start('1') + 7-bit ~addr + R/W(1=read, 0=write) + 32-bit ~data
+; The host already bit-inverts address and data before queueing:
+;   read : TX word = ((~addr & 0x7F) << 1) | 1   -> one RX word (reply)
+;   write: TX word = ((~addr & 0x7F) << 1) | 0, then TX word = ~data
 ;
-; Command format (one 32-bit TX FIFO word per bit):
-;   bit 0: is_read   (1 = read from target, 0 = write to target)
-;   bit 1: write_val (1 = '1'/short pulse, 0 = '0'/long pulse; ignored for reads)
+; Timing at clkdiv=12 (125MHz / 12 = 96 ns/tick), WCH "normal" mode:
+;   start   : low 2-3T, release
+;   '1' bit : low ~2T  (~192ns)
+;   '0' bit : low ~8T  (~768ns)
+;   stop    : high ~18T
+; Read: host drives a 1T marker low, releases, samples the pin at ~500ns,
+; repeats 32x. ISR shifts left (MSB-first) with autopush(32).
 ;
-; Read result (one 32-bit RX FIFO word):
-;   bits [4:0] = X register value (31 = no extension = '1'; low = long extension = '0')
-;   C interprets: X >= 16 -> bit '1', X < 16 -> bit '0'
-;
-; Timing at 125 MHz sys_clk, divider = 1 (8 ns/cycle):
-;   '1' short pulse: 16 cycles = 128 ns
-;   '0' long pulse:  ~63 cycles = 504 ns  (ratio ~1:4, clearly distinguishable)
-;   Read marker:     16 cycles = 128 ns (same as '1' pulse)
-;   Read extension count: 2 cycles/iteration, max 31x2 = 62 cycles
-;
-; SPDX-License-Identifier: BSD-3-Clause
+; SPDX-License-Identifier: BSD-3-Clause (matches picorvd MIT-compatible origin)
 ;
 
 .program swio
+.side_set 1
 
-bit_xfer:
-    pull                  ; wait for command word from C
-    out x, 1              ; extract is_read
-    jmp !x do_write       ; X=0 -> write; X=1 -> read
+.wrap_target
 
-    ; ===================== READ MODE =====================
-    ; Drive a short-low marker, release, then count how long the
-    ; target holds the line LOW (its pulse-width extension).
-    set pindirs, 1        ; output
-    set pins, 0           ; drive low (marker start)
-    set y, 13             ; marker duration (~16 cycles w/ overhead)
-r_mk:
-    jmp y-- r_mk
-    set pindirs, 0        ; release marker (input, pull-up drives high)
-    set x, 31             ; max count (X counts DOWN)
-r_cnt:
-    jmp pin r_done        ; if pin HIGH (target released), stop counting
-    jmp x-- r_cnt         ; else decrement X (2 cycles/iter, max 62 cycles)
-r_done:
-    ; X = 31 - (extension_cycles / 2)
-    ; '1' bit: target released ~same time as host -> X ~31
-    ; '0' bit: target held low ~48 more cycles -> X ~7
-    set y, 20             ; fill remainder of bit period
-r_fill:
-    jmp y-- r_fill [3]    ; 20 x 4 = 80 cycles
-    mov isr, x            ; copy X to ISR
-    push                  ; push to RX FIFO
-    jmp bit_xfer          ; loop back
+start:
+  pull                 side 0 [2] ; Pull the address word; let bus pull high 3T
+  out y, 24            side 1 [1] ; Send the start bit (drive low 2T)
+  nop                  side 0 [2] ; Release start bit, pull up 3T
 
-    ; ===================== WRITE MODE =====================
-do_write:
-    out x, 1              ; extract write_val
-    set pindirs, 1        ; output
-    set pins, 0           ; drive low (pulse start)
-    jmp !x w_long         ; if val=0, long pulse ('0')
+addr_loop:
+  out x, 1             side 1 [0] ; Short pulses are ~2T
+  jmp !x, addr_zero    side 1 [0]
+  nop                  side 1 [5] ; Long pulses are ~8T
+addr_zero:
+  jmp !osre, addr_loop side 0 [2] ; End the bit, pull up 3T
 
-    ; --- Write '1': short low pulse (~16 cycles) ---
-    set y, 12
-w_short:
-    jmp y-- w_short
-    jmp w_release
+  ; Branch on the low bit of the address word (the R/W bit).
+  jmp !x, op_write     side 0 [0] ; bit 0 -> WRITE (host sends ~data)
+  jmp op_read          side 0 [0] ; bit 1 -> READ
 
-    ; --- Write '0': long low pulse (~63 cycles) ---
-w_long:
-    set y, 15
-w_long_lo:
-    jmp y-- w_long_lo [3] ; 15 x 4 = 60 cycles + overhead ~63
+op_read:
+  set x, 31            side 0 [0]
 
-    ; --- Shared release + high wait ---
-w_release:
-    set pindirs, 0        ; release (line goes HIGH via pull-up)
-    set y, 15
-w_hi:
-    jmp y-- w_hi [3]      ; 15 x 4 = 60 cycles HIGH
-    jmp bit_xfer          ; loop back
+read_loop:                        ; Loop time ~1100ns
+  nop                  side 1 [1] ; Start pulse; target drives low, holds ~800ns for '0'
+  nop                  side 0 [2] ; Release; wait for pin to rise if target idle
+  in pins, 1           side 0 [2] ; Sample pin (~500ns), then wait for target release
+  jmp x--, read_loop   side 0 [2]
+
+  nop                  side 0 [6] ; Stop: high ~18T total
+  jmp start            side 0 [10]
+
+op_write:
+  pull                 side 0 [1] ; Pull the data word (~data)
+
+write_loop:
+  out x, 1             side 1 [0]
+  jmp !x, data_zero    side 1 [0]
+  nop                  side 1 [5]
+data_zero:
+  jmp !osre, write_loop side 0 [2]
+
+  nop                  side 0 [6] ; Stop: high ~18T total
+  jmp start            side 0 [10]
+
+.wrap
