@@ -236,7 +236,7 @@ cd $PICO_SDK_PATH && git submodule update --init lib/tinyusb
 cd usbasp-pico
 cmake -B build -G Ninja
 cmake --build build
-# 결과물: build/usbasp-pico.uf2 (~81KB)
+# 결과물: build/usbasp-pico.uf2 (~65KB)
 ```
 
 ## 디렉토리 구조
@@ -278,7 +278,8 @@ usbasp-pico/
 - pyOCD: https://pyocd.io/
 - OpenOCD remote_bitbang: https://openocd.org/doc/html/Debug-Adapter-Configuration.html
 - RP2040-Zero Wiki: https://www.waveshare.com/wiki/RP2040-Zero
-
+- PicoRVD : https://github.com/aappleby/picorvd
+  
 ---
 
 Z.ai / 2026-11-13 / v1.10 (CDC 비활성화 + minichlink 통합 + MOSI/SDI 공유 + JTAG/SWD 백엔드)
