@@ -56,6 +56,7 @@ void led_status_task(void)
     }
 }
 
+#if CFG_TUD_CDC
 /* ---- Unique-id helper for the serial string ---- */
 static void fill_serial(void)
 {
@@ -149,7 +150,6 @@ static int parse_hex(const char *s, int len, uint32_t *out)
     return n;
 }
 
-#if CFG_TUD_CDC
 /* ASCII line processing - only handles '?', 'i', 's' here. Other ASCII
  * commands are not needed because the binary mode covers them. */
 static void cdc_process_line(char *line, int len)
