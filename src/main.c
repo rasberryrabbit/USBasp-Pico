@@ -149,6 +149,7 @@ static int parse_hex(const char *s, int len, uint32_t *out)
     return n;
 }
 
+#if CFG_TUD_CDC
 /* ASCII line processing - only handles '?', 'i', 's' here. Other ASCII
  * commands are not needed because the binary mode covers them. */
 static void cdc_process_line(char *line, int len)
@@ -251,7 +252,6 @@ static bool cdc_binary_step(uint8_t c)
  * the binary-mode state machine first; if it returns false (the byte was
  * not a binary command), we accumulate it into a line buffer and dispatch
  * on newline. */
-#if CFG_TUD_CDC
 void tud_cdc_rx_cb(uint8_t itf)
 {
     (void)itf;
