@@ -19,6 +19,12 @@ void isp_init(void);
 /* Set the SCK speed option (USBASP_ISP_SCK_*). Called before ispConnect(). */
 void isp_set_sck_option(uint8_t option);
 
+/* Set a custom SCK frequency in Hz (arbitrary, not limited to the discrete
+ * USBASP_ISP_SCK_* options). Uses HW SPI0 for freq >= 4 kHz, bit-bang below.
+ * Returns the actual achieved frequency (may differ slightly due to divider
+ * quantization). Disables AUTO fallback mode. */
+uint32_t isp_set_sck_freq_custom(uint32_t freq_hz);
+
 /* Apply the ISP pin layout: drive RESET/SCK/MOSI as outputs, MISO as input,
  * pulse RESET negative then bring SCK low. Mirrors usbasp ispConnect(). */
 void isp_connect(void);

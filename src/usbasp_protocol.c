@@ -299,6 +299,20 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         reply_buffer[0] = 0;
         return tud_control_xfer(rhport, request, reply_buffer, 1);
 
+    case USBASP_PICO_ISP_SETSCK_CUSTOM: {
+        /* Custom SCK frequency: wValue=freq[15:0], wIndex=freq[31:16].
+         * Returns actual achieved frequency as 4-byte LE32. */
+        uint32_t freq = (uint32_t)b0 | ((uint32_t)b1 << 8)
+                      | ((uint32_t)b2 << 16) | ((uint32_t)b3 << 24);
+        uint32_t actual = isp_set_sck_freq_custom(freq);
+        prog_sck = USBASP_ISP_SCK_AUTO;  /* mark as custom (not a discrete option) */
+        reply_buffer[0] = (uint8_t)(actual);
+        reply_buffer[1] = (uint8_t)(actual >> 8);
+        reply_buffer[2] = (uint8_t)(actual >> 16);
+        reply_buffer[3] = (uint8_t)(actual >> 24);
+        return tud_control_xfer(rhport, request, reply_buffer, 4);
+    }
+
     case USBASP_FUNC_TPI_CONNECT:
         tpi_dly_cnt = ((uint16_t)b1 << 8) | b0;
         gpio_put(PIN_ISP_RESET, 1);

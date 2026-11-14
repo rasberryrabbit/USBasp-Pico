@@ -82,6 +82,12 @@
                                           *      returns sampled (tdo<<0) */
 #define USBASP_PICO_JTAG_RELEASE     226  /* OUT: tri-state all JTAG pins, return to idle */
 
+#define USBASP_PICO_ISP_SETSCK_CUSTOM 230 /* OUT: set arbitrary ISP SCK frequency in Hz.
+                                           *      wValue = freq[15:0], wIndex = freq[31:16].
+                                           *      Reply: 4 bytes = actual achieved freq (LE32).
+                                           *      Uses HW SPI0 for freq >= 4 kHz, bit-bang below.
+                                           *      Call before CONNECT. Disables AUTO fallback. */
+
 /* Capabilities flags. bit 0 = TPI (original USBasp), bit 1 = HVSP,
  * bit 2 = SWIO, bit 3 = JTAG/SWD (v1.10). */
 #define USBASP_CAP_0_TPI            0x01
