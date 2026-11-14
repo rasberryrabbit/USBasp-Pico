@@ -172,10 +172,16 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
                     }
                 }
             } else if (prog_state == PROG_STATE_TPI_WRITE) {
-                uint8_t n = (uint8_t)((len < 0xff) ? len : 0xff);
-                tpi_write_block((uint16_t)prog_address, block_scratch, n);
-                prog_address += n;
-                prog_nbytes -= n;
+                uint16_t offset = 0;
+                while (offset < len) {
+                    uint16_t remaining = (uint16_t)(len - offset);
+                    uint8_t n = (uint8_t)(remaining > 0xff ? 0xff : remaining);
+                    tpi_write_block((uint16_t)(prog_address + offset),
+                                    &block_scratch[offset], n);
+                    offset += n;
+                }
+                prog_address += len;
+                prog_nbytes = (prog_nbytes > len) ? (uint16_t)(prog_nbytes - len) : 0;
                 if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
             }
         }
@@ -186,7 +192,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
             hvsp_flash_pending = false;
             uint16_t word = (uint16_t)block_scratch[0] |
                             ((uint16_t)block_scratch[1] << 8);
-            hvsp_write_flash_word(hvsp_flash_addr, word);
+            (void)hvsp_write_flash_word(hvsp_flash_addr, word);
         }
 #endif
         /* SWIO register write: data stage has delivered 4 bytes (little-
@@ -226,6 +232,27 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 #endif
         return true;
     }
+
+    /* A new SETUP aborts any unfinished control transfer. Clear its pending
+     * action before another request can reuse block_scratch. */
+    if (block_write_pending) {
+        block_write_pending = false;
+        block_write_len = 0;
+        if (prog_state == PROG_STATE_WRITEFLASH ||
+            prog_state == PROG_STATE_WRITEEEPROM ||
+            prog_state == PROG_STATE_TPI_WRITE) {
+            prog_state = PROG_STATE_IDLE;
+        }
+    }
+#ifdef USBASP_PICO_ENABLE_HVSP
+    hvsp_flash_pending = false;
+#endif
+    swio_reg_pending = false;
+#ifdef USBASP_PICO_ENABLE_JTAG
+    if (jtag_seq_pending) jtag_seq_result_bytes = 0;
+    jtag_seq_pending = false;
+    jtag_seq_len = 0;
+#endif
 
     /* SETUP stage: reject non-vendor requests */
     if (request->bmRequestType_bit.type != TUSB_REQ_TYPE_VENDOR) {
@@ -391,27 +418,35 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TPI_READBLOCK:
+        /* The TPI primitive accepts an 8-bit count. Split larger USB blocks
+         * into <=255-byte pieces rather than returning uninitialized bytes. */
+        if (wlen > BLOCK_SCRATCH_SIZE) return false;
         prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
         prog_state = PROG_STATE_TPI_READ;
         {
             uint16_t to_read = wlen;
-            if (to_read > BLOCK_SCRATCH_SIZE) to_read = BLOCK_SCRATCH_SIZE;
-            uint8_t n = (uint8_t)((to_read < 0xff) ? to_read : 0xff);
-            tpi_read_block((uint16_t)prog_address, block_scratch, n);
-            prog_address += n;
-            prog_nbytes -= n;
-            if (prog_nbytes == 0) prog_state = PROG_STATE_IDLE;
+            uint16_t offset = 0;
+            while (offset < to_read) {
+                uint16_t remaining = (uint16_t)(to_read - offset);
+                uint8_t n = (uint8_t)(remaining > 0xff ? 0xff : remaining);
+                tpi_read_block((uint16_t)(prog_address + offset),
+                               &block_scratch[offset], n);
+                offset += n;
+            }
+            prog_address += to_read;
+            prog_nbytes = 0;
+            prog_state = PROG_STATE_IDLE;
             return tud_control_xfer(rhport, request, block_scratch, to_read);
         }
 
     case USBASP_FUNC_TPI_WRITEBLOCK:
+        if (wlen > BLOCK_SCRATCH_SIZE) return false;
         prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
         prog_state = PROG_STATE_TPI_WRITE;
         {
             uint16_t to_recv = wlen;
-            if (to_recv > BLOCK_SCRATCH_SIZE) to_recv = BLOCK_SCRATCH_SIZE;
             block_write_pending = true;
             block_write_len = to_recv;
             return tud_control_xfer(rhport, request, block_scratch, to_recv);
@@ -446,7 +481,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_CHIP_ERASE:
-        hvsp_chip_erase();
+        if (!hvsp_chip_erase()) return false;
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_READ_SIG:
@@ -461,7 +496,7 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
     case USBASP_PICO_HVSP_WRITE_FUSE:
         /* b0 = which fuse (0=low, 1=high, 2=extended), b1 = value. */
-        hvsp_write_fuse(b0, b1);
+        if (!hvsp_write_fuse(b0, b1)) return false;
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_READ_FLASH:

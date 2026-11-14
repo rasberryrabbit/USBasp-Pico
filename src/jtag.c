@@ -214,7 +214,7 @@ void jtag_swd_seq(uint8_t dir_bitmap, uint8_t nbits, uint8_t data_in,
     }
     if (data_out) *data_out = out_val;
     /* Leave SWDIO in input mode after a read so the host can decide. */
-    if (!(dir_bitmap >> (nbits - 1)) & 1u) {
+    if (!((dir_bitmap >> (nbits - 1)) & 1u)) {
         jtag_swd_set_dir(false);
     }
 }

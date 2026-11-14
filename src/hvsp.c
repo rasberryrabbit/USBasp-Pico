@@ -84,12 +84,13 @@ void hvsp_exit_mode(void)
     gpio_set_dir(PIN_HVSP_SCI, GPIO_IN);
 }
 
-uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data)
+static bool hvsp_shift_out_checked(uint8_t instruction, uint8_t data,
+                                   uint8_t *response)
 {
-    /* Wait for SDO high (idle / ready) */
+    /* Wait for SDO high (idle / ready). A timeout is an error, not data. */
     int timeout = 5000;
     while (!gpio_get(PIN_HVSP_SDO) && --timeout > 0) { tight_loop_contents(); }
-    if (timeout == 0) return 0xFF;
+    if (timeout == 0) return false;
 
     /* Build 11-bit instruction + 11-bit data frames (per ATtiny85 datasheet
      * Fig 26-15: 11 bits each. We pack as (val<<1) into the leading 10 bits
@@ -106,7 +107,27 @@ uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data)
         if (gpio_get(PIN_HVSP_SDO)) in_bits |= 1;
         hvsp_clock();
     }
-    return in_bits >> 2;
+    if (response) *response = in_bits >> 2;
+    return true;
+}
+
+uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data)
+{
+    uint8_t response = 0xFF;
+    (void)hvsp_shift_out_checked(instruction, data, &response);
+    return response;
+}
+
+/* Bound ready polling as well as individual SDO waits. */
+static bool hvsp_wait_ready(void)
+{
+    absolute_time_t deadline = make_timeout_time_ms(1000);
+    do {
+        uint8_t response;
+        if (!hvsp_shift_out_checked(0x00, 0x00, &response)) return false;
+        if (response & 0x02) return true;
+    } while (!time_reached(deadline));
+    return false;
 }
 
 /* ATtiny85 HVSP command bytes (instruction field) - per datasheet Table 26-6 */
@@ -120,15 +141,14 @@ uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data)
 #define HVSP_CMD_WRITE_FUSE_HIGH  0x40
 #define HVSP_CMD_WRITE_FUSE_EXT   0x40
 
-void hvsp_chip_erase(void)
+bool hvsp_chip_erase(void)
 {
     hvsp_shift_out(HVSP_CMD_CHIP_ERASE, 0x00);
     hvsp_shift_out(0x00, 0x4C);
     hvsp_shift_out(0x00, 0x64);
     hvsp_shift_out(0x00, 0x6C);
-    /* Wait for completion */
-    uint8_t r;
-    do { r = hvsp_shift_out(HVSP_CMD_POLL_READY, 0x00); } while (!(r & 0x02));
+    /* Wait for completion; do not mistake the timeout sentinel for ready. */
+    return hvsp_wait_ready();
 }
 
 uint8_t hvsp_read_signature(uint8_t index)
@@ -149,7 +169,7 @@ uint8_t hvsp_read_fuse(uint8_t which)
     return hvsp_shift_out(0x00, data_field);
 }
 
-void hvsp_write_fuse(uint8_t which, uint8_t value)
+bool hvsp_write_fuse(uint8_t which, uint8_t value)
 {
     hvsp_shift_out(HVSP_CMD_WRITE_FUSE_LOW, 0x4C);
     hvsp_shift_out(value, 0x2C);
@@ -157,9 +177,7 @@ void hvsp_write_fuse(uint8_t which, uint8_t value)
     else if (which == 1) hvsp_shift_out(0x00, (uint8_t)(0x01 << 1));
     else hvsp_shift_out(0x00, (uint8_t)(0x02 << 1));
 
-    /* Wait for completion */
-    uint8_t r;
-    do { r = hvsp_shift_out(HVSP_CMD_POLL_READY, 0x00); } while (!(r & 0x02));
+    return hvsp_wait_ready();
 }
 
 uint8_t hvsp_read_flash(uint16_t word_addr)
@@ -171,7 +189,7 @@ uint8_t hvsp_read_flash(uint16_t word_addr)
     return hvsp_shift_out(0x00, 0x20);
 }
 
-void hvsp_write_flash_word(uint16_t word_addr, uint16_t word)
+bool hvsp_write_flash_word(uint16_t word_addr, uint16_t word)
 {
     hvsp_shift_out(0x10, 0x4C);
     hvsp_shift_out((uint8_t)(word_addr >> 8), 0x0C);
@@ -179,8 +197,7 @@ void hvsp_write_flash_word(uint16_t word_addr, uint16_t word)
     hvsp_shift_out((uint8_t)(word & 0xFF), 0x64);
     hvsp_shift_out((uint8_t)(word >> 8), 0x6C);
 
-    uint8_t r;
-    do { r = hvsp_shift_out(HVSP_CMD_POLL_READY, 0x00); } while (!(r & 0x02));
+    return hvsp_wait_ready();
 }
 
 #else  /* !USBASP_PICO_ENABLE_HVSP */
@@ -190,11 +207,11 @@ void hvsp_init(void) {}
 void hvsp_enter_mode(void) {}
 void hvsp_exit_mode(void) {}
 uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data) { (void)instruction; (void)data; return 0; }
-void hvsp_chip_erase(void) {}
+bool hvsp_chip_erase(void) { return false; }
 uint8_t hvsp_read_signature(uint8_t index) { (void)index; return 0xFF; }
 uint8_t hvsp_read_fuse(uint8_t which) { (void)which; return 0xFF; }
-void hvsp_write_fuse(uint8_t which, uint8_t value) { (void)which; (void)value; }
+bool hvsp_write_fuse(uint8_t which, uint8_t value) { (void)which; (void)value; return false; }
 uint8_t hvsp_read_flash(uint16_t word_addr) { (void)word_addr; return 0xFF; }
-void hvsp_write_flash_word(uint16_t word_addr, uint16_t word) { (void)word_addr; (void)word; }
+bool hvsp_write_flash_word(uint16_t word_addr, uint16_t word) { (void)word_addr; (void)word; return false; }
 
 #endif /* USBASP_PICO_ENABLE_HVSP */

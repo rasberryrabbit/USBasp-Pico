@@ -38,7 +38,7 @@ void hvsp_exit_mode(void);
 uint8_t hvsp_shift_out(uint8_t instruction, uint8_t data);
 
 /* Chip erase (HVSP command sequence) */
-void hvsp_chip_erase(void);
+bool hvsp_chip_erase(void);
 
 /* Read signature byte at index 0..2 */
 uint8_t hvsp_read_signature(uint8_t index);
@@ -47,12 +47,12 @@ uint8_t hvsp_read_signature(uint8_t index);
 uint8_t hvsp_read_fuse(uint8_t which);
 
 /* Write fuse: which = 0 (low), 1 (high), 2 (extended) */
-void hvsp_write_fuse(uint8_t which, uint8_t value);
+bool hvsp_write_fuse(uint8_t which, uint8_t value);
 
 /* Read one flash byte at the given word address */
 uint8_t hvsp_read_flash(uint16_t word_addr);
 
 /* Write one flash word */
-void hvsp_write_flash_word(uint16_t word_addr, uint16_t word);
+bool hvsp_write_flash_word(uint16_t word_addr, uint16_t word);
 
 #endif /* _HVSP_H_ */
