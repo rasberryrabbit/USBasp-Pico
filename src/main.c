@@ -23,36 +23,83 @@
 /* Forward declaration from usb_descriptors.c */
 extern void usbasp_set_serial(const char *serial_hex);
 
-/* ---- Status LED ---- */
-static absolute_time_t led_off_time;
+/* ---- Status LED ----
+ * Active-high output on the existing PIN_LED. No timer IRQs or delays are
+ * used: the main loop services this state machine between TinyUSB tasks.
+ * Long synchronous ISP/TPI operations may pause the visible blink briefly;
+ * this is intentional to avoid injecting jitter into bit-level protocols.
+ */
+static led_status_t led_state = LED_STATUS_IDLE;
+static absolute_time_t led_next_step;
 static bool led_is_on = false;
+static uint8_t led_error_phase = 0;
+
+static void led_output(bool on)
+{
+    if (led_is_on != on) {
+        gpio_put(PIN_LED, on ? 1 : 0); /* existing LED is active-high */
+        led_is_on = on;
+    }
+}
 
 void led_status_init(void)
 {
     gpio_init(PIN_LED);
     gpio_set_dir(PIN_LED, GPIO_OUT);
-    gpio_put(PIN_LED, 1);  /* Pico LED is active-low */
+    gpio_put(PIN_LED, 0);  /* preserve existing active-high pin setup */
     led_is_on = false;
+    led_state = LED_STATUS_IDLE;
+    led_error_phase = 0;
+    led_next_step = make_timeout_time_ms(500);
 }
 
-void led_activity_on(void)
+void led_status_set(led_status_t state)
 {
-    gpio_put(PIN_LED, 0);
-    led_is_on = true;
-    led_off_time = make_timeout_time_ms(50);
-}
+    if (state == led_state) return;
 
-void led_activity_off(void)
-{
-    gpio_put(PIN_LED, 1);
-    led_is_on = false;
+    led_state = state;
+    led_error_phase = 0;
+
+    if (state == LED_STATUS_IDLE) {
+        led_output(false);
+    } else if (state == LED_STATUS_READ) {
+        led_output(true); /* immediate activity indication */
+        led_next_step = make_timeout_time_ms(500); /* slow blink */
+    } else if (state == LED_STATUS_WRITE) {
+        led_output(true); /* immediate activity indication */
+        led_next_step = make_timeout_time_ms(125); /* fast blink */
+    } else if (state == LED_STATUS_ERROR) {
+        led_output(true); /* begin the repeating triple-pulse pattern */
+        led_error_phase = 1;
+        led_next_step = make_timeout_time_ms(100);
+    }
 }
 
 void led_status_task(void)
 {
-    if (led_is_on && time_reached(led_off_time)) {
-        gpio_put(PIN_LED, 1);
-        led_is_on = false;
+    if (led_state == LED_STATUS_IDLE) {
+        led_output(false);
+        return;
+    }
+
+    if (led_state == LED_STATUS_ERROR) {
+        /* Three short pulses, followed by a longer pause. */
+        static const bool error_pattern[7] = {
+            true, false, true, false, true, false, false
+        };
+        if (time_reached(led_next_step)) {
+            led_output(error_pattern[led_error_phase]);
+            led_error_phase = (uint8_t)((led_error_phase + 1u) % 7u);
+            uint32_t delay_ms = (led_error_phase == 6u) ? 700u : 100u;
+            led_next_step = make_timeout_time_ms(delay_ms);
+        }
+        return;
+    }
+
+    if (time_reached(led_next_step)) {
+        led_output(!led_is_on);
+        led_next_step = make_timeout_time_ms(
+            led_state == LED_STATUS_READ ? 500u : 125u);
     }
 }
 

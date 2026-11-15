@@ -79,6 +79,7 @@ static uint8_t block_scratch[BLOCK_SCRATCH_SIZE] __attribute__((aligned(4)));
 /* Pending block write state - data arrives in the data stage and we process
  * it during the ACK stage callback. */
 static bool block_write_pending = false;
+static bool led_transfer_pending = false;
 static uint16_t block_write_len = 0;
 
 /* Pending HVSP flash word write (1 word = 2 bytes) - the address is captured
@@ -230,6 +231,10 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
             jtag_seq_result_bytes = out_bytes;
         }
 #endif
+        if (stage == CONTROL_STAGE_ACK && led_transfer_pending) {
+            led_transfer_pending = false;
+            led_status_set(LED_STATUS_IDLE);
+        }
         return true;
     }
 
@@ -254,8 +259,14 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
     jtag_seq_len = 0;
 #endif
 
+    if (led_transfer_pending) {
+        led_transfer_pending = false;
+        led_status_set(LED_STATUS_ERROR);
+    }
+
     /* SETUP stage: reject non-vendor requests */
     if (request->bmRequestType_bit.type != TUSB_REQ_TYPE_VENDOR) {
+        led_status_set(LED_STATUS_ERROR);
         return false;
     }
 
@@ -272,13 +283,11 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
     case USBASP_FUNC_CONNECT:
         isp_set_sck_option(prog_sck);
         prog_address_newmode = false;
-        led_activity_on();
         isp_connect();
         return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_DISCONNECT:
         isp_disconnect();
-        led_activity_off();
         return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TRANSMIT:
@@ -289,6 +298,8 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         return tud_control_xfer(rhport, request, reply_buffer, 4);
 
     case USBASP_FUNC_READFLASH:
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_READ);
         if (!prog_address_newmode)
             prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
@@ -306,6 +317,8 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         }
 
     case USBASP_FUNC_READEEPROM:
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_READ);
         if (!prog_address_newmode)
             prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
@@ -325,6 +338,8 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         return tud_control_xfer(rhport, request, reply_buffer, 1);
 
     case USBASP_FUNC_WRITEFLASH:
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_WRITE);
         if (!prog_address_newmode)
             prog_address = ((uint32_t)b1 << 8) | b0;
         prog_pagesize = b2;
@@ -344,6 +359,8 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         }
 
     case USBASP_FUNC_WRITEEEPROM:
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_WRITE);
         if (!prog_address_newmode)
             prog_address = ((uint32_t)b1 << 8) | b0;
         prog_pagesize = 0;
@@ -390,7 +407,6 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         gpio_set_dir(PIN_ISP_RESET, GPIO_OUT);
         busy_wait_us_32(1);
         gpio_put(PIN_ISP_RESET, 0);
-        led_activity_on();
         busy_wait_us_32(8);
         tpi_init();
         return usbasp_control_empty_reply(rhport, request);
@@ -406,7 +422,6 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         gpio_set_dir(PIN_ISP_RESET, GPIO_IN);
         gpio_set_dir(PIN_ISP_SCK, GPIO_IN);
         gpio_set_dir(PIN_ISP_MOSI, GPIO_IN);
-        led_activity_off();
         return usbasp_control_empty_reply(rhport, request);
 
     case USBASP_FUNC_TPI_RAWREAD:
@@ -420,7 +435,12 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
     case USBASP_FUNC_TPI_READBLOCK:
         /* The TPI primitive accepts an 8-bit count. Split larger USB blocks
          * into <=255-byte pieces rather than returning uninitialized bytes. */
-        if (wlen > BLOCK_SCRATCH_SIZE) return false;
+        if (wlen > BLOCK_SCRATCH_SIZE) {
+            led_status_set(LED_STATUS_ERROR);
+            return false;
+        }
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_READ);
         prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
         prog_state = PROG_STATE_TPI_READ;
@@ -441,7 +461,12 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         }
 
     case USBASP_FUNC_TPI_WRITEBLOCK:
-        if (wlen > BLOCK_SCRATCH_SIZE) return false;
+        if (wlen > BLOCK_SCRATCH_SIZE) {
+            led_status_set(LED_STATUS_ERROR);
+            return false;
+        }
+        led_transfer_pending = true;
+        led_status_set(LED_STATUS_WRITE);
         prog_address = ((uint32_t)b1 << 8) | b0;
         prog_nbytes = wlen;
         prog_state = PROG_STATE_TPI_WRITE;
@@ -481,7 +506,10 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_CHIP_ERASE:
-        if (!hvsp_chip_erase()) return false;
+        if (!hvsp_chip_erase()) {
+            led_status_set(LED_STATUS_ERROR);
+            return false;
+        }
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_READ_SIG:
@@ -496,7 +524,10 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 
     case USBASP_PICO_HVSP_WRITE_FUSE:
         /* b0 = which fuse (0=low, 1=high, 2=extended), b1 = value. */
-        if (!hvsp_write_fuse(b0, b1)) return false;
+        if (!hvsp_write_fuse(b0, b1)) {
+            led_status_set(LED_STATUS_ERROR);
+            return false;
+        }
         return tud_control_status(rhport, request);
 
     case USBASP_PICO_HVSP_READ_FLASH:
@@ -616,7 +647,8 @@ bool tud_vendor_control_xfer_cb(uint8_t rhport, uint8_t stage,
 #endif /* USBASP_PICO_ENABLE_JTAG */
 
     default:
-        /* Unknown request - stall */
+        /* Unknown request - stall and show a short error pattern. */
+        led_status_set(LED_STATUS_ERROR);
         return false;
     }
 }

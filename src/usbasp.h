@@ -24,7 +24,7 @@
  *   GP3  ->  ISP_MOSI    (output)  -- shared with HVSP SDI (see below)
  *   GP4  ->  ISP_MISO    (input)
  *   GP5  ->  ISP_RESET   (output)
- *   GP6  ->  STATUS_LED  (output, active low, on-board Pico LED)
+ *   GP6  ->  STATUS_LED  (output, active high, existing LED wiring)
  *
  *   HVSP (optional, ATtiny85 12 V programming)
  *   ------------------------------------------------
@@ -116,9 +116,16 @@ extern uint8_t  prog_blockflags;
 extern uint16_t prog_pagecounter;
 extern prog_state_t prog_state;
 
-/* API consumed by the protocol layer */
-void led_activity_on(void);
-void led_activity_off(void);
+/* Non-blocking status LED states. Existing PIN_LED and active-high wiring are unchanged. */
+typedef enum {
+    LED_STATUS_IDLE = 0,
+    LED_STATUS_READ,
+    LED_STATUS_WRITE,
+    LED_STATUS_ERROR
+} led_status_t;
+
+/* API consumed by the protocol layer. */
+void led_status_set(led_status_t state);
 void led_status_init(void);
 void led_status_task(void);
 
