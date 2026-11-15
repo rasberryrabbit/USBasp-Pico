@@ -5,7 +5,17 @@ USBasp 호환 AVR 프로그래머 + SWIO (CH32V003) + JTAG/SWD 펌웨어 (CDC �
 + v1.9: MOSI/SDI 핀 공유 (HVSP 전용 핀 1개 절약)
 + v1.10: JTAG/SWD 백엔드 추가 (pyOCD + OpenOCD 호환)
 + v1.10-pio: SWIO 백엔드 PIO 전환 (정밀 타이밍 + 더블리드 버그 수정)
++ 1.11: WCH SWIO 완전하게 동작. AVR 프로그래밍 USBasp 딜레이 개선. 하드웨어 SPI로 최적화.
 
+## v1.11 변경 사항
+  
+### 문제
+- 1.10까지 WCH SWIO는 잘못된 구현으로 동작하지 않았음.
+    
+### 수정
+- PicoRVD에서 구현된 내용을 포팅해서 완벽하게 해결.
+- SPI 기능에 몇몇 최적화 적용.
+  
 ## v1.10-pio 변경 사항
 
 ### 문제
